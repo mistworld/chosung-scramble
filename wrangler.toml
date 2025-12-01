@@ -1,11 +1,24 @@
-name = "chosung-game"
-compatibility_date = "2024-11-19"
+name = "steep-moon-7816"
+main = "src/worker.js"
+compatibility_date = "2024-12-01"
+workers_dev = true
+
+[build]
+command = ""
+
+[[kv_namespaces]]
+binding = "ROOM_LIST"
+id = "fdd09a3f8360417b8b710dcbc0ad1d93"
+
+[[kv_namespaces]]
+binding = "WORD_CACHE"
+id = "c2668ae36bf64d74b174663e61f91d53"
 
 [[durable_objects.bindings]]
 name = "GAME_STATE"
 class_name = "GameStateRoom"
+script_name = "steep-moon-7816"
 
 [[migrations]]
-tag = "v1-game-state"
+tag = "v1"
 new_classes = ["GameStateRoom"]
-
