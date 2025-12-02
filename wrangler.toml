@@ -1,11 +1,17 @@
-name = "chosung-game"
-compatibility_date = "2024-11-19"
+name = "steep-moon-7816"
+main = "src/worker.js"
+compatibility_date = "2024-12-16"
+workers_dev = true
 
-[[durable_objects.bindings]]
-name = "GAME_STATE"
-class_name = "GameStateRoom"
+[build]
+command = ""
 
-[[migrations]]
-tag = "v1-game-state"
-new_classes = ["GameStateRoom"]
+# KV 전용 - Durable Objects 제거
 
+[[kv_namespaces]]
+binding = "ROOM_LIST"
+id = "fdd09a3f8360417b8b710dcbc0ad1d93"
+
+[[kv_namespaces]]
+binding = "WORD_CACHE"
+id = "c2668ae36bf64d74b174663e61f91d53"

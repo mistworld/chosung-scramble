@@ -1,7 +1,4 @@
-import { GameStateRoom } from './game-state-do.js';
-
-// GameStateRoom을 메인 Worker에서 export하여 DO로 사용
-export { GameStateRoom };
+// KV 전용 Worker (Durable Objects 제거)
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -486,7 +483,7 @@ async function handleGameState(request, env) {
         return jsonResponse({ error: 'roomId is required' }, 400);
     }
 
-    // GET 요청: DO 상태와 KV의 players 정보를 병합
+    // GET 요청: KV에서 게임 상태 조회
     if (request.method === 'GET') {
         // 먼저 KV에서 기본 방 정보 가져오기
         const roomData = await env.ROOM_LIST.get(roomId, 'json');
@@ -517,162 +514,142 @@ async function handleGameState(request, env) {
             }
         }
 
-        let doState = null;
+        // KV 전용: 게임 상태 생성
+        const gameState = {
+            id: roomId,
+            createdAt: roomData.createdAt,
+            roomNumber: roomData.roomNumber || null,
+            title: roomData.title || '초성 배틀방',
+            gameMode: roomData.gameMode || 'time',
+            players: roomData.players || [],
+            maxPlayers: roomData.maxPlayers || 5,
+            acceptingPlayers: roomData.acceptingPlayers !== false,
+            gameStarted: roomData.gameStarted || false,
+            startTime: roomData.startTime || null,
+            endTime: roomData.endTime || null,
+            timeLeft: roomData.timeLeft || 180,
+            consonants: roomData.consonants || [],
+            scores: roomData.scores || {},
+            playerWords: roomData.playerWords || {},
+            roundNumber: roomData.roundNumber || 0,
+            lastUpdate: roomData.lastUpdate || null,
+            chatMessages: roomData.chatMessages || [],
+            // 턴제 모드
+            currentTurnPlayerId: roomData.currentTurnPlayerId || null,
+            turnStartTime: roomData.turnStartTime || null,
+            playerLives: roomData.playerLives || {},
+            eliminatedPlayers: roomData.eliminatedPlayers || [],
+            usedWords: (roomData.usedWords || []).slice(-100), // 최근 100개만
+            turnCount: roomData.turnCount || {},
+            isFirstTurn: roomData.isFirstTurn !== undefined ? roomData.isFirstTurn : true
+        };
         
-        // DO 바인딩이 있으면 DO에서 게임 상태 가져오기
-        if (env.GAME_STATE) {
-            try {
-                const id = env.GAME_STATE.idFromName(roomId);
-                const stub = env.GAME_STATE.get(id);
-                const doResponse = await stub.fetch(request);
-                
-                if (doResponse.ok) {
-                    doState = await doResponse.json();
-                }
-            } catch (error) {
-                console.error(`[game-state] DO 에러 (무시하고 KV 데이터 사용):`, error);
-            }
-        }
+        console.log(`[game-state] GET ${roomId}: players=${gameState.players.length}, gameStarted=${gameState.gameStarted}`);
         
-        // DO 상태가 없으면 KV 데이터를 기반으로 기본 상태 생성
-        if (!doState) {
-            doState = {
-                id: roomId,
-                createdAt: roomData.createdAt,
-                roomNumber: roomData.roomNumber || null,
-                gameStarted: roomData.gameStarted || false,
-                startTime: null,
-                endTime: null,
-                timeLeft: 180,
-                consonants: [],
-                scores: roomData.scores || {},
-                playerWords: roomData.playerWords || {},
-                roundNumber: roomData.roundNumber || 0,
-                lastUpdate: null,
-                chatMessages: [] // 채팅 메시지 초기화
-            };
-        }
-        
-        // KV의 players 정보와 기타 메타데이터 병합
-        doState.players = roomData.players || [];
-        doState.maxPlayers = roomData.maxPlayers || 5;
-        doState.acceptingPlayers = roomData.acceptingPlayers !== false;
-        doState.createdAt = roomData.createdAt;
-        doState.roomNumber = roomData.roomNumber || doState.roomNumber || null;
-        doState.title = roomData.title || '초성 배틀방'; // 🆕 제목 추가
-        doState.gameMode = roomData.gameMode || 'time'; // 🆕 게임 모드 추가
-        
-        // 🆕 턴제 모드 상태 병합
-        if (doState.gameMode === 'turn') {
-            doState.currentTurnPlayerId = doState.currentTurnPlayerId || null;
-            doState.turnStartTime = doState.turnStartTime || null;
-            doState.playerLives = doState.playerLives || {};
-            doState.eliminatedPlayers = doState.eliminatedPlayers || [];
-            // 🆕 usedWords는 서버에서 전체 유지하되, 클라이언트로는 최근 100개만 전송 (메모리 절약)
-            // 서버에서는 중복 체크를 위해 전체를 유지하지만 (30000개든 상관없이), 클라이언트는 화면 표시용이므로 최근 100개만 필요
-            if (doState.usedWords && Array.isArray(doState.usedWords)) {
-                doState.usedWords = doState.usedWords.slice(-100); // 최근 100개만 전송
-            } else {
-                doState.usedWords = [];
-            }
-            doState.turnCount = doState.turnCount || {};
-            doState.isFirstTurn = doState.isFirstTurn !== undefined ? doState.isFirstTurn : true;
-        }
-        
-        // DO 상태가 있으면 DO를 우선, 없으면 KV 사용
-        // DO의 scores와 KV의 scores를 병합 (DO가 우선, 없으면 KV 사용)
-        if (!doState.scores || Object.keys(doState.scores).length === 0) {
-            // DO에 scores가 없으면 KV의 scores 사용
-            if (roomData.scores) {
-                doState.scores = roomData.scores;
-            }
-        } else {
-            // DO에 scores가 있으면 DO를 우선하되, KV의 scores도 병합 (누락된 플레이어 점수 보완)
-            if (roomData.scores) {
-                doState.scores = { ...roomData.scores, ...doState.scores };
-            }
-        }
-        if (!doState.playerWords || Object.keys(doState.playerWords).length === 0) {
-            // DO에 playerWords가 없으면 KV의 playerWords 사용
-            if (roomData.playerWords) {
-                doState.playerWords = roomData.playerWords;
-            }
-        } else {
-            // DO에 playerWords가 있으면 DO를 우선하되, KV의 playerWords도 병합
-            if (roomData.playerWords) {
-                doState.playerWords = { ...roomData.playerWords, ...doState.playerWords };
-            }
-        }
-        
-        // chatMessages가 없으면 빈 배열로 초기화
-        if (!doState.chatMessages || !Array.isArray(doState.chatMessages)) {
-            doState.chatMessages = [];
-        }
-        
-        // players가 없으면 빈 배열로 설정 (에러 방지)
-        if (!doState.players || !Array.isArray(doState.players)) {
-            doState.players = [];
-        }
-        
-        // 디버깅 로그
-        console.log(`[game-state] GET ${roomId}: players=${doState.players.length}, gameStarted=${doState.gameStarted}, chatMessages=${doState.chatMessages.length}`);
-        
-        return jsonResponse(doState);
+        return jsonResponse(gameState);
     }
     
-    // POST/DELETE 요청: DO로 전달하고, 게임 액션이면 KV도 업데이트
-    if (!env.GAME_STATE) {
-        return jsonResponse({ error: 'Durable Object binding GAME_STATE missing' }, 500);
-    }
-    
-    // POST 요청 본문 확인 (clone해서 읽기)
-    let updateBody = null;
+    // POST 요청: KV에 게임 상태 업데이트
     if (request.method === 'POST') {
-        const clonedRequest = request.clone();
-        updateBody = await clonedRequest.json();
-    }
-    
-    const id = env.GAME_STATE.idFromName(roomId);
-    const stub = env.GAME_STATE.get(id);
-    const doResponse = await stub.fetch(request);
-    
-    // 게임 액션이면 KV도 업데이트 (DO와 동기화)
-    if (request.method === 'POST' && updateBody && updateBody.action) {
-        try {
-            const roomData = await env.ROOM_LIST.get(roomId, 'json');
-            if (roomData) {
-                if (updateBody.action === 'new_game') {
-                    // new_game: scores와 playerWords 초기화
-                    roomData.gameStarted = true;
-                    roomData.roundNumber = (roomData.roundNumber || 0) + 1;
-                    roomData.scores = {};
-                    roomData.playerWords = {};
-                } else if (updateBody.action === 'start_game') {
-                    // start_game: 게임 시작
-                    roomData.gameStarted = true;
-                    roomData.roundNumber = (roomData.roundNumber || 0) + 1;
-                } else if (updateBody.action === 'end_game') {
-                    // end_game: 게임 종료
-                    roomData.gameStarted = false;
-                }
-                
-                // KV 업데이트
-                await env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
-                    metadata: {
-                        id: roomId,
-                        createdAt: roomData.createdAt,
-                        playerCount: roomData.players?.length || 0,
-                        gameStarted: roomData.gameStarted || false,
-                        roundNumber: roomData.roundNumber || 0
-                    }
-                });
-            }
-        } catch (error) {
-            console.error(`[game-state] KV 업데이트 실패 (무시):`, error);
+        const updateBody = await request.json();
+        const roomData = await env.ROOM_LIST.get(roomId, 'json');
+        
+        if (!roomData) {
+            return jsonResponse({ error: 'Room not found' }, 404);
         }
+        
+        const now = Date.now();
+        
+        // 게임 시작
+        if (updateBody.action === 'start_game') {
+            roomData.gameStarted = true;
+            roomData.startTime = now;
+            roomData.timeLeft = 180;
+            roomData.consonants = updateBody.consonants || [];
+            roomData.roundNumber = (roomData.roundNumber || 0) + 1;
+            roomData.endTime = null;
+            
+            console.log(`[game-state] 게임 시작: ${roomId}, 초성: ${roomData.consonants.length}개`);
+        }
+        
+        // 새 게임
+        else if (updateBody.action === 'new_game') {
+            roomData.gameStarted = true;
+            roomData.startTime = now;
+            roomData.timeLeft = 180;
+            roomData.consonants = updateBody.consonants || [];
+            roomData.scores = {};
+            roomData.playerWords = {};
+            roomData.roundNumber = (roomData.roundNumber || 0) + 1;
+            roomData.endTime = null;
+            roomData.chatMessages = roomData.chatMessages || []; // 채팅은 유지
+            
+            console.log(`[game-state] 새 게임: ${roomId}`);
+        }
+        
+        // 게임 종료
+        else if (updateBody.action === 'end_game') {
+            roomData.gameStarted = false;
+            roomData.endTime = now;
+            
+            console.log(`[game-state] 게임 종료: ${roomId}`);
+        }
+        
+        // 점수 업데이트
+        else if (updateBody.playerId && updateBody.score !== undefined) {
+            if (!roomData.scores) roomData.scores = {};
+            if (!roomData.playerWords) roomData.playerWords = {};
+            
+            roomData.scores[updateBody.playerId] = updateBody.score;
+            roomData.playerWords[updateBody.playerId] = updateBody.words || [];
+            roomData.lastUpdate = now;
+            
+            console.log(`[game-state] 점수 업데이트: ${updateBody.playerId} = ${updateBody.score}점`);
+        }
+        
+        // 채팅 메시지
+        else if (updateBody.chatMessage && updateBody.playerName) {
+            if (!roomData.chatMessages) roomData.chatMessages = [];
+            
+            roomData.chatMessages.push({
+                playerId: updateBody.playerId,
+                playerName: updateBody.playerName,
+                message: updateBody.chatMessage,
+                timestamp: now
+            });
+            
+            // 최대 100개 메시지만 유지
+            if (roomData.chatMessages.length > 100) {
+                roomData.chatMessages = roomData.chatMessages.slice(-100);
+            }
+            
+            console.log(`[game-state] 채팅: ${updateBody.playerName}: ${updateBody.chatMessage}`);
+        }
+        
+        // KV 저장
+        await env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
+            metadata: {
+                id: roomId,
+                roomNumber: roomData.roomNumber || 0,
+                createdAt: roomData.createdAt,
+                playerCount: roomData.players?.length || 0,
+                gameStarted: roomData.gameStarted || false,
+                roundNumber: roomData.roundNumber || 0,
+                title: roomData.title || '초성 배틀방',
+                gameMode: roomData.gameMode || 'time'
+            }
+        });
+        
+        return jsonResponse({ success: true, roomData });
     }
     
-    return doResponse;
+    // DELETE 요청: 방 삭제
+    if (request.method === 'DELETE') {
+        await env.ROOM_LIST.delete(roomId);
+        return jsonResponse({ success: true });
+    }
+    
+    return jsonResponse({ error: 'Method not allowed' }, 405);
 }
 
 async function handleChat(request, env) {
@@ -683,13 +660,7 @@ async function handleChat(request, env) {
         return jsonResponse({ error: 'roomId is required' }, 400);
     }
 
-    if (!env.GAME_STATE) {
-        return jsonResponse({ error: 'Durable Object binding GAME_STATE missing' }, 500);
-    }
-
-    const id = env.GAME_STATE.idFromName(roomId);
-    const stub = env.GAME_STATE.get(id);
-
+    // POST: 채팅 메시지 추가 (handleGameState로 전달)
     if (request.method === 'POST') {
         const { playerName, message } = await request.json();
         
@@ -697,8 +668,8 @@ async function handleChat(request, env) {
             return jsonResponse({ error: 'Missing playerName or message' }, 400);
         }
 
-        // DO에 채팅 메시지 전달
-        const chatRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
+        // game-state POST로 전달
+        const gameStateRequest = new Request(`${request.url.split('?')[0].replace('/chat', '/game-state')}?roomId=${roomId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -708,20 +679,16 @@ async function handleChat(request, env) {
             })
         });
         
-        const response = await stub.fetch(chatRequest);
-        return response;
+        return handleGameState(gameStateRequest, env);
     }
 
+    // GET: 채팅 메시지 조회
     if (request.method === 'GET') {
-        // 채팅 메시지 조회
-        const stateRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
-            method: 'GET'
-        });
-        const stateResponse = await stub.fetch(stateRequest);
-        const state = await stateResponse.json();
-        
-        // chatMessages만 반환
-        return jsonResponse(state.chatMessages || []);
+        const roomData = await env.ROOM_LIST.get(roomId, 'json');
+        if (!roomData) {
+            return jsonResponse([]);
+        }
+        return jsonResponse(roomData.chatMessages || []);
     }
 
     return jsonResponse({ error: 'Method not allowed' }, 405);
