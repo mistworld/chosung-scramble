@@ -1,0 +1,5 @@
+functions/
+functions_backup/
+node_modules/
+*.log
+.wrangler/
