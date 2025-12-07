@@ -7155,6 +7155,9 @@
         
         // 🆕 턴제 모드: 5초 카운트다운 타이머 시작
         function startTurnModeTimer(roomData) {
+            // 🆕 배포 버전 확인용 로그
+            console.log('[턴제 타이머 v2] 5초 버전 (화면: 4-3-2-1-0) - 배포 확인용');
+            
             // 🆕 이전 타이머 완전히 정리
             if (gameState.turnTimer) {
                 clearInterval(gameState.turnTimer);
