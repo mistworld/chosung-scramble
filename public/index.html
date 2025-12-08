@@ -4417,10 +4417,8 @@
                     const audio = new Audio('./sound/finished.mp3');
                     audio.volume = 0.5;
                     audio.onended = () => {
-                        // 🆕 소리 재생이 완전히 끝난 후에만 플래그 리셋 (5초 후 안전장치)
-                        setTimeout(() => {
-                            gameState.finishedSoundPlaying = false;
-                        }, 5000); // finished.mp3는 5초이므로, 재생 완료 후 5초 더 대기
+                        // 재생이 끝나면 즉시 플래그 리셋
+                        gameState.finishedSoundPlaying = false;
                     };
                     audio.play().catch(e => {
                         console.log('소리 재생 실패:', e);
@@ -6426,9 +6424,8 @@
                             const finishedSound = new Audio('./sound/finished.mp3');
                             finishedSound.volume = 0.5;
                             finishedSound.onended = () => {
-                                setTimeout(() => {
-                                    gameState.finishedSoundPlaying = false;
-                                }, 5000);
+                                // 재생이 끝나면 즉시 플래그 리셋
+                                gameState.finishedSoundPlaying = false;
                             };
                             finishedSound.play().catch(e => {
                                 console.log('소리 재생 실패:', e);
@@ -6448,9 +6445,8 @@
                         const finishedSound = new Audio('./sound/finished.mp3');
                         finishedSound.volume = 0.5;
                         finishedSound.onended = () => {
-                            setTimeout(() => {
-                                gameState.finishedSoundPlaying = false;
-                            }, 5000);
+                            // 재생이 끝나면 즉시 플래그 리셋
+                            gameState.finishedSoundPlaying = false;
                         };
                         finishedSound.play().catch(e => {
                             console.log('소리 재생 실패:', e);

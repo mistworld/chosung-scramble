@@ -1120,14 +1120,23 @@ async function handleValidateWord(request, env) {
             }
         }
 
-        // API 호출
+        // API 호출 (타임아웃 설정으로 빠른 응답)
         const apiUrl = new URL('https://stdict.korean.go.kr/api/search.do');
         apiUrl.searchParams.append('key', 'C670DD254FE59C25E23DC785BA2AAAFE');
         apiUrl.searchParams.append('q', trimmedWord);
         apiUrl.searchParams.append('req_type', 'xml');
 
-        const response = await fetch(apiUrl.toString());
-        const xmlText = await response.text();
+        let xmlText;
+        try {
+            // 타임아웃 설정 (3초)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 3000);
+            
+            const response = await fetch(apiUrl.toString(), {
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            xmlText = await response.text();
 
         // total 확인
         const totalMatch = xmlText.match(/<total>(\d+)<\/total>/);
