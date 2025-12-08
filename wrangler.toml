@@ -2,6 +2,10 @@ name = "steep-moon-7816"
 main = "src/worker.js"
 compatibility_date = "2024-12-02"
 
+# 🚀 APAC 지역 설정 (KV 속도 개선)
+[placement]
+mode = "smart"
+
 [[kv_namespaces]]
 binding = "ROOM_LIST"
 id = "fdd09a3f8360417b8b710dcbc0ad1d93"
