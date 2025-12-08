@@ -4182,6 +4182,10 @@
                         
                         // 서버에 단어 제출
                         console.log('[턴제] 단어 제출:', wordForGame, '플레이어:', multiplayerState.players.length);
+                        
+                        // 🆕 단어 제출 플래그 설정 (turn_timeout 중복 방지)
+                        gameState.wordSubmitted = true;
+                        
                         const submitResponse = await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${multiplayerState.roomId}`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -7156,13 +7160,15 @@
         // 🆕 턴제 모드: 5초 카운트다운 타이머 시작
         function startTurnModeTimer(roomData) {
             // 🆕 배포 버전 확인용 로그
-            console.log('[턴제 타이머 v3] 5초 버전 (화면: 5-4-3-2-1-0) - 배포 확인용');
+            console.log('[턴제 타이머 v5] 플래그 해제 버그 수정 배포 확인 - ' + new Date().toISOString());
             
             // 🆕 이전 타이머 완전히 정리
             if (gameState.turnTimer) {
                 clearInterval(gameState.turnTimer);
                 gameState.turnTimer = null;
             }
+            
+            // 🆕 단어 제출 플래그 리셋 (새 턴 시작) - 위에서 이미 처리됨
             
             if (!roomData || !roomData.currentTurnPlayerId || !roomData.turnStartTime) {
                 console.log('[턴제] 턴 정보 없음, 폴링에서 업데이트 대기');
@@ -7171,7 +7177,7 @@
             
             const isMyTurn = roomData.currentTurnPlayerId === multiplayerState.playerId;
             const isFirstTurn = roomData.isFirstTurn === true;
-            const turnTimeLimit = isFirstTurn ? 8 : 5; // 첫 턴 8초, 이후 5초 (화면: 5-4-3-2-1-0)
+            const turnTimeLimit = isFirstTurn ? 9 : 6; // 첫 턴 9초, 이후 6초
             
             // 🆕 탈락 여부 확인
             const isEliminated = roomData.eliminatedPlayers?.includes(multiplayerState.playerId) || false;
@@ -7218,21 +7224,26 @@
             // 턴 타이머 표시
             const turnTimerEl = document.getElementById('turnModeTimer');
             if (turnTimerEl) {
-                // 첫 턴(8초)은 그대로 8부터, 이후 턴(5초)은 5부터 시작
-                turnTimerEl.textContent = turnTimeLimit;
+                // 🆕 내부 시간은 6초 그대로지만, 화면에는 6 대신 5부터 보이게 처리
+                // 첫 턴(9초)은 그대로 9부터, 이후 턴(6초)은 5부터 시작
+                const initialDisplay = (!isFirstTurn && turnTimeLimit === 6)
+                    ? 5
+                    : turnTimeLimit;
+                turnTimerEl.textContent = initialDisplay;
             }
             
             // 타이머 시작 (서버 시간 기준으로 정확한 계산)
-            let timeLeft = turnTimeLimit;
             const serverStartTime = roomData.turnStartTime || Date.now();
             const clientNow = Date.now(); // 클라이언트 현재 시간 (서버 시간과의 차이 계산용)
             let lastPlayedSecond = -1; // 효과음 중복 재생 방지
             let timeoutSent = false; // 중복 전송 방지
-            let lastDisplayedSecond = turnTimeLimit; // 마지막 표시된 초 (중복 업데이트 방지)
+            let lastDisplayedSecond = -1; // 마지막 표시된 초 (중복 업데이트 방지)
             
-            // 🆕 서버 시간과 클라이언트 시간의 차이 계산 (네트워크 지연 보정)
-            // 서버가 turnStartTime을 설정한 시점과 클라이언트가 받은 시점의 차이를 보정
-            const timeOffset = clientNow - serverStartTime; // 양수면 클라이언트가 늦게 받은 것
+            // 🆕 단어 제출 플래그 (turn_timeout 중복 방지) - 함수 스코프에서 관리
+            if (typeof gameState.wordSubmitted === 'undefined') {
+                gameState.wordSubmitted = false;
+            }
+            gameState.wordSubmitted = false; // 새 턴 시작 시 리셋
             
             gameState.turnTimer = setInterval(() => {
                 if (!gameState.gameRunning) {
@@ -7245,8 +7256,7 @@
                 const elapsedMs = now - serverStartTime; // 서버 시작 시간부터 경과한 시간
                 const elapsed = Math.max(0, elapsedMs / 1000); // 초 단위 (소수점 포함)
                 timeLeft = Math.max(0, turnTimeLimit - elapsed);
-                // 표시용: timeLeft가 0보다 크면 내림 + 1, 0이면 0 (5에서 머무르는 문제 해결)
-                const timeLeftDisplay = timeLeft > 0 ? Math.floor(timeLeft) + 1 : 0;
+                const timeLeftDisplay = Math.ceil(timeLeft); // 표시용 (올림 - 각 초가 정확히 1초씩 표시)
                 
                 // 중복 업데이트 방지 (같은 초를 여러 번 표시하지 않음)
                 if (timeLeftDisplay === lastDisplayedSecond) {
@@ -7256,8 +7266,14 @@
                 
                 // 타이머 업데이트
                 if (turnTimerEl) {
-                    // 내부 시간은 5초 사용, 화면에는 5-4-3-2-1-0 표시
-                    turnTimerEl.textContent = timeLeftDisplay;
+                    // 🆕 내부 시간은 6초 그대로 사용하되, 화면에는 6 대신 5부터 보이도록 처리
+                    // (사용자 체감: 5-4-3-2-1-0, 실제 시간: 6초 유지)
+                    let displayValue = timeLeftDisplay;
+                    // 첫 턴(isFirstTurn) 말고, 이후 턴(6초 타이머)에서만 6을 5로 보이게 함
+                    if (!isFirstTurn && displayValue === 6) {
+                        displayValue = 5;
+                    }
+                    turnTimerEl.textContent = displayValue;
                 }
                 
                 // 효과음 재생 (2초, 1초 남았을 때)
@@ -7273,7 +7289,8 @@
                 }
                 
                 // 시간 초과 처리 (서버 turnStartTime 기준으로 정확히 시간이 지났을 때)
-                if (isMyTurn && elapsed >= turnTimeLimit && !timeoutSent) {
+                // 🆕 단어 제출이 성공했으면 turn_timeout 전송하지 않음 (중복 턴 전환 방지)
+                if (isMyTurn && elapsed >= turnTimeLimit && !timeoutSent && !gameState.wordSubmitted) {
                     timeoutSent = true;
                     clearInterval(gameState.turnTimer);
                     

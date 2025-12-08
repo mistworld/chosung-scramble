@@ -189,7 +189,7 @@ export class GameStateRoom {
             
             // 🆕 시간 초과 체크 (서버 측에서도 확인)
             if (state.turnStartTime) {
-                const turnTimeLimit = state.isFirstTurn ? 8000 : 5000; // 첫 턴 8초, 이후 5초 (화면에는 4-3-2-1-0으로 표시)
+                const turnTimeLimit = state.isFirstTurn ? 9000 : 6000; // 첫 턴 9초, 이후 6초 (밀리초)
                 const elapsed = now - state.turnStartTime;
                 
                 if (elapsed >= turnTimeLimit) {
@@ -219,9 +219,9 @@ export class GameStateRoom {
                         // 다음 턴으로 전환 (state.players만 사용)
                         await this.nextTurn(state, now, state.players || []);
                     } else {
-                        // 연장권이 남아있으면 다음 5초 시작 (화면: 4-3-2-1-0)
+                        // 연장권이 남아있으면 다음 6초 시작
                         state.turnStartTime = now;
-                        console.log(`[턴제] ${playerId} 연장권 사용. 다음 5초 시작 (화면: 4-3-2-1-0)`);
+                        console.log(`[턴제] ${playerId} 연장권 사용. 다음 6초 시작`);
                     }
                     
                     return state; // 단어 거부
