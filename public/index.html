@@ -5735,7 +5735,12 @@
                     
                     const roomData = await response.json();
                     
-                    // 🚀 이전 버전 방식: 복잡한 오프셋 계산 제거 (서버 turnStartTime을 그대로 사용)
+                    // 🆕 타이머 동기화: 폴링 응답 받을 때 serverTimeOffset 계산
+                    if (roomData.serverNow) {
+                        const newOffset = Date.now() - roomData.serverNow;
+                        multiplayerState.serverTimeOffset = newOffset;
+                        console.log(`[시간동기화] serverTimeOffset: ${Math.round(newOffset)}ms`);
+                    }
                     
                     // 🆕 최신 roomData 저장 (checkWord에서 탈락자 체크용)
                     multiplayerState.lastRoomData = roomData;
@@ -7485,13 +7490,14 @@
                     return;
                 }
                 
-                // 🚀 이전 버전 방식: 서버 turnStartTime 기준으로 정확한 남은 시간 계산
-                const now = Date.now();
-                const elapsedMs = now - serverStartTime; // 서버 시작 시간부터 경과한 시간
-                const elapsed = Math.max(0, elapsedMs / 1000); // 초 단위 (소수점 포함)
+                // 🆕 타이머 동기화: 서버 시간 오프셋을 적용한 정확한 남은 시간 계산
+                const clientNow = Date.now();
+                // serverStartTime은 이미 클라이언트 시간 기준으로 변환되었으므로, 직접 계산
+                const elapsedMs = Math.max(0, clientNow - serverStartTime);
+                const elapsed = elapsedMs / 1000; // 초 단위 (소수점 포함)
                 timeLeft = Math.max(0, turnTimeLimit - elapsed);
-                // 🆕 Math.ceil 사용: 4.1초 → 5초로 표시 (이전 버전과 동일)
-                const timeLeftDisplay = Math.ceil(timeLeft); // 표시용 (올림 - 각 초가 정확히 1초씩 표시)
+                // 🆕 Math.floor 사용: 4.9초 → 4초로 표시 (정확한 카운트다운)
+                const timeLeftDisplay = Math.floor(timeLeft); // 표시용 (내림 - 정확한 초 단위 표시)
                 
                 // 중복 업데이트 방지 (같은 초를 여러 번 표시하지 않음)
                 if (timeLeftDisplay === lastDisplayedSecond) {
