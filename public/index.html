@@ -5085,6 +5085,7 @@
                 multiplayerState.lastPlayerCount = 1;
                 
                 // 🆕 제목, 게임 모드, 방장 정보를 서버에 전송 (방 생성과 동시에 방장 자동 입장)
+                console.log('[방 생성] 요청 시작:', { roomTitle, gameMode, playerId: multiplayerState.playerId, playerName: playerName?.substring(0, 10) });
                 const createResponse = await fetch('https://steep-moon-7816.sucksuck1114.workers.dev/api/create-room', { 
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -5094,18 +5095,35 @@
                         playerId: multiplayerState.playerId,
                         playerName: playerName
                     })
+                }).catch(err => {
+                    console.error('[방 생성] 네트워크 에러:', err);
+                    throw new Error('네트워크 오류: ' + err.message);
                 });
+                
+                console.log('[방 생성] 응답 상태:', createResponse.status, createResponse.statusText);
+                
                 if (!createResponse.ok) {
                     const errorData = await createResponse.json().catch(() => ({}));
                     console.error('[방 생성] API 응답 오류:', createResponse.status, errorData);
-                    throw new Error(errorData.error || '방 생성 실패');
+                    showToast(`방 생성 실패 (${createResponse.status}): ${errorData.error || '알 수 없는 오류'}`);
+                    throw new Error(errorData.error || `방 생성 실패 (${createResponse.status})`);
                 }
-                const createData = await createResponse.json();
+                
+                const createData = await createResponse.json().catch(err => {
+                    console.error('[방 생성] JSON 파싱 에러:', err);
+                    throw new Error('응답 파싱 실패: ' + err.message);
+                });
+                
+                console.log('[방 생성] 응답 데이터:', createData);
+                
                 const roomId = createData.roomId;
                 if (!roomId) {
                     console.error('[방 생성] roomId가 없음:', createData);
+                    showToast('방 생성 실패: roomId 없음');
                     throw new Error('방 생성 실패: roomId 없음');
                 }
+                
+                console.log('[방 생성] 성공! roomId:', roomId);
                 multiplayerState.roomId = roomId;
                 
                 // 🆕 방 생성 시 이미 방장이 입장했으므로 join-room 호출 불필요

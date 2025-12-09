@@ -556,91 +556,101 @@ async function handleRooms(env) {
 }
 
 async function handleCreateRoom(request, env) {
-  const { title, gameMode, playerId, playerName } = await request.json().catch(() => ({}));
-  const now = Date.now();
-  let roomNumber = 1;
   try {
-      // 🚀 최근 1시간 이내 방만 체크 (오래된 방 번호 무시)
-      const ONE_HOUR = 60 * 60 * 1000;
-      const existing = await env.ROOM_LIST.list({ limit: 1000 });
-      const usedNumbers = new Set();
-      for (const key of existing.keys) {
-          const meta = key.metadata;
-          // 최근 1시간 이내 방만 체크
-          if (meta && typeof meta.createdAt === 'number' && (now - meta.createdAt) < ONE_HOUR) {
-              if (typeof meta.roomNumber === 'number' && meta.roomNumber > 0) {
-                  usedNumbers.add(meta.roomNumber);
+      const body = await request.json().catch(() => ({}));
+      const { title, gameMode, playerId, playerName } = body;
+      console.log('[create-room] 요청 받음:', { title, gameMode, playerId, playerName: playerName?.substring(0, 10) });
+      
+      const now = Date.now();
+      let roomNumber = 1;
+      try {
+          // 🚀 최근 1시간 이내 방만 체크 (오래된 방 번호 무시)
+          const ONE_HOUR = 60 * 60 * 1000;
+          const existing = await env.ROOM_LIST.list({ limit: 1000 });
+          const usedNumbers = new Set();
+          for (const key of existing.keys) {
+              const meta = key.metadata;
+              // 최근 1시간 이내 방만 체크
+              if (meta && typeof meta.createdAt === 'number' && (now - meta.createdAt) < ONE_HOUR) {
+                  if (typeof meta.roomNumber === 'number' && meta.roomNumber > 0) {
+                      usedNumbers.add(meta.roomNumber);
+                  }
               }
           }
+          while (usedNumbers.has(roomNumber)) {
+              roomNumber++;
+          }
+      } catch (e) {
+          console.error('[create-room] roomNumber 계산 실패, 1부터 시작:', e);
+          roomNumber = 1;
       }
-      while (usedNumbers.has(roomNumber)) {
-          roomNumber++;
-      }
-  } catch (e) {
-      console.error('[create-room] roomNumber 계산 실패, 1부터 시작:', e);
-      roomNumber = 1;
-  }
-  const roomId = generateRoomCode();
-  
-  const randomTitles = [
-      "초성 배틀방",
-      "빠른 대결",
-      "도전! 초성왕",
-      "친구들과 한판",
-      "단어 천재 모여라"
-  ];
-  
-  const roomTitle = title && title.trim() ? title.trim() : randomTitles[Math.floor(Math.random() * randomTitles.length)];
-  
-  const mode = gameMode === 'turn' ? 'turn' : 'time';
-  
-  const hostPlayerId = playerId || `player_${Date.now()}`;
-  const hostPlayerName = playerName || '방장';
-  
-  const roomData = {
-      id: roomId,
-      roomNumber,
-      createdAt: now,
-      title: roomTitle,
-      gameMode: mode,
-      players: [{
-          id: hostPlayerId,
-          name: hostPlayerName,
-          score: 0,
-          joinedAt: now
-      }],
-      maxPlayers: 5,
-      acceptingPlayers: true,
-      gameStarted: false,
-      roundNumber: 0,
-      scores: { [hostPlayerId]: 0 },
-      lastSeen: { [hostPlayerId]: now }
-  };
-  
-  await env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
-      metadata: {
+      const roomId = generateRoomCode();
+      
+      const randomTitles = [
+          "초성 배틀방",
+          "빠른 대결",
+          "도전! 초성왕",
+          "친구들과 한판",
+          "단어 천재 모여라"
+      ];
+      
+      const roomTitle = title && title.trim() ? title.trim() : randomTitles[Math.floor(Math.random() * randomTitles.length)];
+      
+      const mode = gameMode === 'turn' ? 'turn' : 'time';
+      
+      const hostPlayerId = playerId || `player_${Date.now()}`;
+      const hostPlayerName = playerName || '방장';
+      
+      const roomData = {
           id: roomId,
           roomNumber,
           createdAt: now,
-          playerCount: 1,
+          title: roomTitle,
+          gameMode: mode,
+          players: [{
+              id: hostPlayerId,
+              name: hostPlayerName,
+              score: 0,
+              joinedAt: now
+          }],
+          maxPlayers: 5,
+          acceptingPlayers: true,
           gameStarted: false,
           roundNumber: 0,
-          title: roomTitle,
-          gameMode: mode
+          scores: { [hostPlayerId]: 0 },
+          lastSeen: { [hostPlayerId]: now }
+      };
+      
+      await env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
+          metadata: {
+              id: roomId,
+              roomNumber,
+              createdAt: now,
+              playerCount: 1,
+              gameStarted: false,
+              roundNumber: 0,
+              title: roomTitle,
+              gameMode: mode
+          }
+      });
+      
+      console.log('[create-room] 방 생성 성공:', { roomId, roomNumber, roomTitle, hostPlayerId });
+      
+      try {
+          const recentRooms = await env.ROOM_LIST.get('_recent_rooms', 'json') || [];
+          recentRooms.push({ roomId, createdAt: now });
+          const oneMinuteAgo = now - 60 * 1000;
+          const filtered = recentRooms.filter(r => r.createdAt > oneMinuteAgo).slice(-20);
+          await env.ROOM_LIST.put('_recent_rooms', JSON.stringify(filtered));
+      } catch (e) {
+          console.error('[create-room] recent rooms 업데이트 실패 (무시):', e);
       }
-  });
-  
-  try {
-      const recentRooms = await env.ROOM_LIST.get('_recent_rooms', 'json') || [];
-      recentRooms.push({ roomId, createdAt: now });
-      const oneMinuteAgo = now - 60 * 1000;
-      const filtered = recentRooms.filter(r => r.createdAt > oneMinuteAgo).slice(-20);
-      await env.ROOM_LIST.put('_recent_rooms', JSON.stringify(filtered));
-  } catch (e) {
-      console.error('[create-room] recent rooms 업데이트 실패 (무시):', e);
+      
+      return jsonResponse({ roomId });
+  } catch (error) {
+      console.error('[create-room] 에러 발생:', error);
+      return jsonResponse({ error: error.message || '방 생성 실패', details: error.stack }, 500);
   }
-  
-  return jsonResponse({ roomId });
 }
 
 async function handleJoinRoom(request, env) {
