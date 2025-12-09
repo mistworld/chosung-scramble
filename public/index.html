@@ -4907,6 +4907,8 @@
             lastTurnPlayerId: null,
             lastTurnStartTime: null,
             players: [], // 플레이어 목록 저장
+            // 🆕 타이머 동기화: 서버 시간 오프셋
+            serverTimeOffset: 0, // 클라이언트 시간 - 서버 시간 (밀리초)
             // 🆕 턴제 효과음 추적 (상대방 효과음 재생용)
             lastUsedWordsCount: 0, // 이전 usedWords 배열 길이
             lastTurnCounts: {}, // 이전 turnCount 상태
@@ -5732,6 +5734,17 @@
                     }
                     
                     const roomData = await response.json();
+                    
+                    // 🆕 타이머 동기화: 서버 시간 오프셋 계산
+                    if (roomData.serverNow !== undefined) {
+                        const clientNow = Date.now();
+                        multiplayerState.serverTimeOffset = clientNow - roomData.serverNow;
+                        // 오프셋이 너무 크면 (5초 이상) 무시 (네트워크 지연으로 인한 오차)
+                        if (Math.abs(multiplayerState.serverTimeOffset) > 5000) {
+                            console.warn('[타이머 동기화] 오프셋이 너무 큼, 무시:', multiplayerState.serverTimeOffset, 'ms');
+                            multiplayerState.serverTimeOffset = 0;
+                        }
+                    }
                     
                     // 🆕 최신 roomData 저장 (checkWord에서 탈락자 체크용)
                     multiplayerState.lastRoomData = roomData;
@@ -7444,7 +7457,6 @@
             
             // 타이머 시작 (서버 시간 기준으로 정확한 계산)
             const serverStartTime = roomData.turnStartTime || Date.now();
-            const clientNow = Date.now(); // 클라이언트 현재 시간 (서버 시간과의 차이 계산용)
             let lastPlayedSecond = -1; // 효과음 중복 재생 방지
             let timeoutSent = false; // 중복 전송 방지
             let lastDisplayedSecond = -1; // 마지막 표시된 초 (중복 업데이트 방지)
@@ -7469,9 +7481,12 @@
                     return;
                 }
                 
-                // 🆕 서버 turnStartTime 기준으로 정확한 남은 시간 계산
-                const now = Date.now();
-                const elapsedMs = now - serverStartTime; // 서버 시작 시간부터 경과한 시간
+                // 🆕 타이머 동기화: 서버 시간 오프셋을 적용한 정확한 남은 시간 계산
+                const clientNow = Date.now();
+                // 서버 시간 = 클라이언트 시간 - 오프셋
+                const serverNow = clientNow - (multiplayerState.serverTimeOffset || 0);
+                // 서버 시작 시간부터 경과한 시간 (서버 시간 기준)
+                const elapsedMs = serverNow - serverStartTime;
                 const elapsed = Math.max(0, elapsedMs / 1000); // 초 단위 (소수점 포함)
                 timeLeft = Math.max(0, turnTimeLimit - elapsed);
                 const timeLeftDisplay = Math.ceil(timeLeft); // 표시용 (올림 - 각 초가 정확히 1초씩 표시)
@@ -7506,8 +7521,9 @@
                     }
                 }
                 
-                // 시간 초과 처리 (서버 turnStartTime 기준으로 정확히 시간이 지났을 때)
+                // 🆕 타이머 동기화: 시간 초과 처리 (서버 시간 기준으로 정확히 시간이 지났을 때)
                 // 🆕 단어 제출이 성공했으면 turn_timeout 전송하지 않음 (중복 턴 전환 방지)
+                // elapsed는 이미 서버 시간 기준으로 계산됨
                 if (isMyTurn && elapsed >= turnTimeLimit && !timeoutSent && !gameState.wordSubmitted) {
                     timeoutSent = true;
                     clearInterval(gameState.turnTimer);

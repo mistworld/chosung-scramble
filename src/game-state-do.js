@@ -28,7 +28,12 @@ export class GameStateRoom {
             if (!snapshot) {
                 return this.json({ error: 'Room not found' }, 404);
             }
-            return this.json(snapshot);
+            // 🆕 타이머 동기화: 서버 현재 시간을 함께 전송
+            const responseData = {
+                ...snapshot,
+                serverNow: Date.now() // 서버 현재 시간 (밀리초)
+            };
+            return this.json(responseData);
         }
 
         if (request.method === 'POST') {
