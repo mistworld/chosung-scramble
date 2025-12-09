@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>초성왕</title>
-    <!-- Force deploy: 2024-12-09-슬롯안정화+게임중탈락처리 -->
+    <!-- Force deploy: 2024-12-09-대기방슬롯수정 -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Do+Hyeon&display=swap" rel="stylesheet">
@@ -5293,11 +5293,17 @@
                 multiplayerState.gameMode = roomData.gameMode || 'time';
                 updateGameModeUI(multiplayerState.gameMode);
                 
-                // 🚀 슬롯 즉시 표시
-                if (multiplayerState.isMultiplayer) {
+                // 🚀 슬롯 즉시 표시 (멀티플레이 상태 확인 + players 배열 확인)
+                if (multiplayerState.isMultiplayer && roomData.players && Array.isArray(roomData.players) && roomData.players.length > 0) {
                     document.getElementById('playerSlotsLeft')?.classList.remove('hidden');
                     document.getElementById('chatContainer')?.classList.remove('hidden');
                     updatePlayerSlots(roomData);
+                } else {
+                    console.warn('[입장] 슬롯 표시 조건 불만족:', {
+                        isMultiplayer: multiplayerState.isMultiplayer,
+                        hasPlayers: !!roomData.players,
+                        playersLength: roomData.players?.length || 0
+                    });
                 }
                 
                 if (multiplayerState.gameMode === 'turn') {
@@ -6290,8 +6296,10 @@
                 }
             }
 
-            // 실제 플레이어 슬롯 (탈락한 플레이어는 제외하여 슬롯 안정화)
-            const eliminatedSet = isTurnMode ? new Set(roomData.eliminatedPlayers || []) : new Set();
+            // 실제 플레이어 슬롯
+            // 🚀 대기실(게임 시작 전)에서는 모든 플레이어 표시, 게임 중에만 탈락한 플레이어 제외
+            const isGameStarted = roomData.gameStarted === true;
+            const eliminatedSet = (isTurnMode && isGameStarted) ? new Set(roomData.eliminatedPlayers || []) : new Set();
             const activePlayersForSlots = sortedPlayers.filter(p => !eliminatedSet.has(p.id));
             
             for (let i = 0; i < activePlayersForSlots.length && i < maxSlots; i++) {
