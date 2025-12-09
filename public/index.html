@@ -4940,7 +4940,15 @@
             // 방 목록 조회 함수 (재시도 로직 포함)
             async function fetchAndDisplayRooms(retryCount = 0) {
                 try {
-                    const response = await fetch('https://steep-moon-7816.sucksuck1114.workers.dev/api/rooms');
+                    // 🚀 캐시 완전 방지 (timestamp 추가)
+                    const timestamp = Date.now();
+                    const response = await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/rooms?t=${timestamp}`, {
+                        cache: 'no-store',
+                        headers: {
+                            'Cache-Control': 'no-cache, no-store, must-revalidate',
+                            'Pragma': 'no-cache'
+                        }
+                    });
                     
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}`);
@@ -5002,7 +5010,7 @@
             const modal = document.getElementById('mpRoomModal');
             modal.classList.remove('hidden');
             
-            // 🆕 1초마다 자동 새로고침
+            // 🚀 500ms마다 자동 새로고침 (더 빠른 업데이트)
             if (roomListInterval) clearInterval(roomListInterval);
             roomListInterval = setInterval(async () => {
                 // 모달이 열려있을 때만 새로고침
@@ -5012,7 +5020,7 @@
                     clearInterval(roomListInterval);
                     roomListInterval = null;
                 }
-            }, 1000);
+            }, 500); // 🚀 1초 → 500ms로 단축
         }
 
         function closeRoomModal() {

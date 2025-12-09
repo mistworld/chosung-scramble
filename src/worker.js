@@ -437,13 +437,21 @@ async function handleRooms(env) {
       const list = await env.ROOM_LIST.list({ limit: 100 });
       console.log(`[rooms] list() 결과: ${list.keys.length}개`);
       
+      // 🚀 최근 생성된 방 목록 가져오기 (최대 30초 이내)
       const recentRooms = await env.ROOM_LIST.get('_recent_rooms', 'json') || [];
-      const recentRoomIds = new Set(recentRooms.map(r => r.roomId));
-      console.log(`[rooms] 최근 생성된 방: ${recentRoomIds.size}개`);
+      const THIRTY_SECONDS = 30 * 1000;
+      const recentRoomIds = new Set(
+          recentRooms
+              .filter(r => r.createdAt && (now - r.createdAt) < THIRTY_SECONDS)
+              .map(r => r.roomId)
+      );
+      console.log(`[rooms] 최근 생성된 방 (30초 이내): ${recentRoomIds.size}개`);
       
+      // 🚀 모든 방 데이터 병렬로 가져오기
       const roomPromises = list.keys.map(key => env.ROOM_LIST.get(key.name, 'json'));
       const roomDataArray = await Promise.all(roomPromises);
       
+      // 🚀 최근 생성된 방 중 list.keys에 없는 것들도 가져오기 (KV eventual consistency 대응)
       const recentRoomPromises = Array.from(recentRoomIds)
           .filter(id => !list.keys.some(k => k.name === id))
           .map(id => env.ROOM_LIST.get(id, 'json'));
@@ -534,9 +542,10 @@ async function handleRooms(env) {
               console.error(`최근 방 처리 실패 ${roomData?.id}:`, error);
           }
       }
+      // 🚀 생성 시간순 정렬 (최신 방이 먼저)
       rooms.sort((a, b) => b.createdAt - a.createdAt);
       
-      console.log(`활성 방 개수: ${rooms.length}`);
+      console.log(`[rooms] 활성 방 개수: ${rooms.length}개 (최신: ${rooms[0]?.id || '없음'})`);
       return new Response(JSON.stringify(rooms), {
           headers: { 
               'Content-Type': 'application/json',
@@ -636,12 +645,19 @@ async function handleCreateRoom(request, env) {
       
       console.log('[create-room] 방 생성 성공:', { roomId, roomNumber, roomTitle, hostPlayerId });
       
+      // 🚀 최근 생성된 방 목록에 추가 (30초 이내 방만 유지)
       try {
           const recentRooms = await env.ROOM_LIST.get('_recent_rooms', 'json') || [];
           recentRooms.push({ roomId, createdAt: now });
-          const oneMinuteAgo = now - 60 * 1000;
-          const filtered = recentRooms.filter(r => r.createdAt > oneMinuteAgo).slice(-20);
+          const THIRTY_SECONDS = 30 * 1000;
+          const thirtySecondsAgo = now - THIRTY_SECONDS;
+          // 최근 30초 이내 방만 유지 (최대 50개)
+          const filtered = recentRooms
+              .filter(r => r.createdAt && r.createdAt > thirtySecondsAgo)
+              .sort((a, b) => b.createdAt - a.createdAt)
+              .slice(0, 50);
           await env.ROOM_LIST.put('_recent_rooms', JSON.stringify(filtered));
+          console.log(`[create-room] _recent_rooms 업데이트: ${filtered.length}개 방 유지`);
       } catch (e) {
           console.error('[create-room] recent rooms 업데이트 실패 (무시):', e);
       }
