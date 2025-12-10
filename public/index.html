@@ -7165,11 +7165,24 @@
             updateStartScreenButtons();
         });
         
-        // 🆕 페이지 떠날 때 방 나가기 처리
-        window.addEventListener('beforeunload', async (e) => {
+        // 🆕 브라우저 창 닫기 감지 - leave-room API 자동 호출
+        window.addEventListener('beforeunload', () => {
             if (multiplayerState.isMultiplayer && multiplayerState.roomId && multiplayerState.playerId) {
-                // 비동기로 서버에 나가기 신호 전송
-                navigator.sendBeacon('https://steep-moon-7816.sucksuck1114.workers.dev/api/leave-room', 
+                
+                // 🆕 게임 중이면 탈락 처리도 함께
+                if (gameState.gameRunning && multiplayerState.gameMode === 'turn') {
+                    navigator.sendBeacon(
+                        `https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${multiplayerState.roomId}`,
+                        JSON.stringify({
+                            action: 'force_eliminate',
+                            playerId: multiplayerState.playerId
+                        })
+                    );
+                }
+                
+                // 방 나가기
+                navigator.sendBeacon(
+                    'https://steep-moon-7816.sucksuck1114.workers.dev/api/leave-room',
                     JSON.stringify({
                         roomId: multiplayerState.roomId,
                         playerId: multiplayerState.playerId
@@ -7181,20 +7194,6 @@
         // 🆕 페이지 visibility 변경 시 처리 (모바일 브라우저 대응)
         // 🆕 visibilitychange 이벤트 제거 (브라우저 창을 가려도 방을 나가지 않도록)
         // 탭 전환이나 브라우저 최소화는 방을 나가는 것으로 간주하지 않음
-        
-        // 🆕 페이지 나가기/새로고침 감지 (실제로 페이지를 떠날 때만)
-        window.addEventListener('beforeunload', async (e) => {
-            if (multiplayerState.isMultiplayer && multiplayerState.roomId && multiplayerState.playerId) {
-                // 나가기 신호 즉시 전송 (동기적으로)
-                const data = JSON.stringify({
-                    roomId: multiplayerState.roomId,
-                    playerId: multiplayerState.playerId
-                });
-                
-                // sendBeacon을 사용하면 페이지 나가기 전에 확실히 전송됨
-                navigator.sendBeacon('https://steep-moon-7816.sucksuck1114.workers.dev/api/leave-room', data);
-            }
-        });
         
         // 🆕 visibilitychange 이벤트 제거 (브라우저 창을 가려도 방을 나가지 않도록)
         // 탭 전환이나 브라우저 최소화는 방을 나가는 것으로 간주하지 않음
