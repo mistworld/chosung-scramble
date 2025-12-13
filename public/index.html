@@ -5378,14 +5378,32 @@
                 return;
             }
 
-            // 게임이 시작되었고 초성이 있으면 참여
+            // 게임이 시작되었고 초성이 있으면 관전자 모드 (다음 라운드부터 참여)
             if (roomData.gameStarted === true && 
                 roomData.consonants && 
                 Array.isArray(roomData.consonants) && 
                 roomData.consonants.length > 0) {
                 
-                console.log('[입장] ✅ 게임 참여 - 초성:', roomData.consonants);
-                joinActiveGame(roomData);
+                // 🚀 게임 중 입장은 관전자 모드 (턴 받지 않음)
+                console.log('[입장] 👁️ 게임 진행 중 - 관전자 모드');
+                
+                // 게임 화면 숨기고 대기실 상태 유지
+                document.getElementById('gameScreen').classList.add('hidden');
+                document.getElementById('gameStartSection').classList.remove('hidden');
+                
+                // 채팅창과 슬롯은 표시
+                document.getElementById('playerSlotsLeft')?.classList.remove('hidden');
+                document.getElementById('chatContainer')?.classList.remove('hidden');
+                
+                // 관전자에게 나가기 버튼 표시
+                const turnModeLeaveBtn = document.getElementById('turnModeLeaveBtn');
+                if (turnModeLeaveBtn && roomData.gameMode === 'turn') {
+                    turnModeLeaveBtn.classList.remove('hidden');
+                    turnModeLeaveBtn.style.display = 'block';
+                }
+                
+                // 폴링 시작 (다음 라운드 시작 감지용)
+                startPolling();
             } else {
                 // 게임 대기 중
                 console.log('[입장] ⏳ 게임 대기 중');
@@ -6006,14 +6024,6 @@
                     }
                     
                     // 슬롯 업데이트 (생명권, 턴 횟수)
-                    // 🆕 디버깅: 탈락자 슬롯 확인
-                    if (isTurnMode && isGameStarted) {
-                        console.log('[슬롯 디버그]', {
-                            players: roomData.players?.map(p => ({ id: p.id, name: p.name })),
-                            eliminatedPlayers: roomData.eliminatedPlayers,
-                            playerLives: roomData.playerLives
-                        });
-                    }
                     updateScoreboard(roomData);
                     
                     // 🆕 나가기 버튼 표시 로직 (탈락자 + 관전자)
@@ -6535,8 +6545,8 @@
             if (!multiplayerState.isMultiplayer || !multiplayerState.roomId) return;
 
             try {
-                // 서버에 채팅 메시지 전송 (띄어쓰기 포함)
-                await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/chat?roomId=${multiplayerState.roomId}`, {
+                // 서버에 채팅 메시지 전송 (띄어쓰기 포함, playerId 포함)
+                await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/chat?roomId=${multiplayerState.roomId}&playerId=${encodeURIComponent(multiplayerState.playerId || '')}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -6544,6 +6554,16 @@
                         message: message // 띄어쓰기 포함된 원본 메시지
                     })
                 });
+                
+                // 🚀 채팅 전송 후 폴링 강제 실행 (즉시 동기화)
+                if (multiplayerState.pollingAbortController) {
+                    multiplayerState.pollingAbortController.abort();
+                }
+                setTimeout(() => {
+                    if (multiplayerState.pollingInterval) {
+                        // 다음 폴링 주기까지 기다리지 않고 즉시 실행
+                    }
+                }, 100);
                 
                 // 게임 입력창으로 포커스 복귀
                 document.getElementById('wordInput').focus();
@@ -7774,6 +7794,10 @@
             document.getElementById('gameScreen').classList.add('hidden');
             document.getElementById('gameStartSection').classList.remove('hidden');
             
+            // 🚀 모든 모달 닫기 (결과 모달 등)
+            document.querySelector('.mp-result-modal')?.remove();
+            document.querySelector('.mp-result-overlay')?.remove();
+            
             // 게임 상태 초기화
             resetGame();
             
@@ -7789,6 +7813,9 @@
 
             // 시작 화면 버튼 업데이트 (혼자하기/함께하기) - 최초 시작 화면으로
             updateStartScreenButtons();
+            
+            // 🚀 최초 시작 화면 강제 표시 (혼자하기/함께하기 버튼 보이도록)
+            document.getElementById('gameStartSection').classList.remove('hidden');
         }
 
         function leaveGameRoom() {

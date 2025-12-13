@@ -108,6 +108,8 @@ export class GameStateRoom {
           if (state.chatMessages.length > 100) {
               state.chatMessages = state.chatMessages.slice(-100);
           }
+          // 🚀 채팅 메시지 저장 (즉시 동기화)
+          await this.persistState(state);
       }
 
       if (update.action === 'start_game') {
@@ -128,10 +130,26 @@ export class GameStateRoom {
               
               // 🚀 새 라운드 시작 시 관전자도 자동 참여
               // update.players가 있으면 업데이트 (관전자 포함)
+              // 🆕 단, 브라우저 종료로 나간 사람은 제외 (blacklistedPlayers)
+              let playersToInclude = [];
               if (Array.isArray(update.players) && update.players.length > 0) {
-                  state.players = update.players;
+                  // 🆕 브라우저 종료한 사람 제외
+                  const blacklisted = state.blacklistedPlayers || [];
+                  playersToInclude = update.players.filter(p => {
+                      const playerId = p.id || p;
+                      return !blacklisted.includes(playerId);
+                  });
+                  state.players = playersToInclude;
+              } else {
+                  // update.players가 없으면 기존 state.players 유지 (단, blacklisted 제외)
+                  const existingPlayers = state.players || [];
+                  const blacklisted = state.blacklistedPlayers || [];
+                  playersToInclude = existingPlayers.filter(p => {
+                      const playerId = p.id || p;
+                      return !blacklisted.includes(playerId);
+                  });
+                  state.players = playersToInclude;
               }
-              // update.players가 없으면 기존 state.players 유지 (관전자 포함)
               
               const players = state.players || [];
               if (players.length > 0) {
@@ -176,11 +194,27 @@ export class GameStateRoom {
               state.turnCount = {};
               state.isFirstTurn = true;
               
-              // 🚀 게임 시작 시에만 players 초기화 (없을 때만)
-              if (!state.players || state.players.length === 0) {
-                  if (Array.isArray(update.players) && update.players.length > 0) {
-                      state.players = update.players;
-                  }
+              // 🚀 게임 시작 시 players 초기화 (블랙리스트 제외)
+              let playersToInclude = [];
+              if (Array.isArray(update.players) && update.players.length > 0) {
+                  // 🆕 브라우저 종료한 사람 제외
+                  const blacklisted = state.blacklistedPlayers || [];
+                  playersToInclude = update.players.filter(p => {
+                      const playerId = p.id || p;
+                      return !blacklisted.includes(playerId);
+                  });
+                  state.players = playersToInclude;
+              } else if (!state.players || state.players.length === 0) {
+                  // update.players가 없고 state.players도 없으면 빈 배열
+                  state.players = [];
+              } else {
+                  // 기존 state.players 유지하되 블랙리스트 제외
+                  const blacklisted = state.blacklistedPlayers || [];
+                  playersToInclude = state.players.filter(p => {
+                      const playerId = p.id || p;
+                      return !blacklisted.includes(playerId);
+                  });
+                  state.players = playersToInclude;
               }
               
               const players = state.players || [];
@@ -281,6 +315,13 @@ export class GameStateRoom {
       if (update.action === 'force_eliminate' && state.gameMode === 'turn') {
           const { playerId } = update;
           if (playerId) {
+              // 🚀 블랙리스트 추가 (다음 라운드에서 제외)
+              if (!state.blacklistedPlayers) state.blacklistedPlayers = [];
+              if (!state.blacklistedPlayers.includes(playerId)) {
+                  state.blacklistedPlayers.push(playerId);
+                  console.log(`[턴제] ${playerId} 블랙리스트 추가 (브라우저 종료)`);
+              }
+              
               // 🚀 DO의 state.players에서 제거 (슬롯에서 즉시 사라짐)
               if (state.players && Array.isArray(state.players)) {
                   state.players = state.players.filter(p => (p.id || p) !== playerId);
@@ -342,7 +383,8 @@ export class GameStateRoom {
               eliminatedPlayers: [],
               usedWords: [],
               turnCount: {},
-              isFirstTurn: true
+              isFirstTurn: true,
+              blacklistedPlayers: [] // 🆕 브라우저 종료한 사람 블랙리스트
           };
           await this.persistState(snapshot);
       }
@@ -356,6 +398,7 @@ export class GameStateRoom {
       if (!snapshot.usedWords) snapshot.usedWords = [];
       if (!snapshot.turnCount) snapshot.turnCount = {};
       if (snapshot.isFirstTurn === undefined) snapshot.isFirstTurn = true;
+      if (!snapshot.blacklistedPlayers) snapshot.blacklistedPlayers = []; // 🆕 블랙리스트 초기화
       return snapshot;
   }
 
@@ -1198,6 +1241,7 @@ async function handleGameState(request, env) {
 async function handleChat(request, env) {
   const url = new URL(request.url);
   const roomId = url.searchParams.get('roomId');
+  const playerId = url.searchParams.get('playerId') || 'unknown';
   
   if (!roomId) {
       return jsonResponse({ error: 'roomId is required' }, 400);
@@ -1213,12 +1257,13 @@ async function handleChat(request, env) {
       if (!playerName || !message) {
           return jsonResponse({ error: 'Missing playerName or message' }, 400);
       }
+      // 🚀 playerId를 body에 포함 (DO에서 채팅 메시지 저장용)
       const chatRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
               chatMessage: message,
-              playerId: url.searchParams.get('playerId') || 'unknown',
+              playerId: playerId, // 🆕 playerId 포함
               playerName: playerName
           })
       });
