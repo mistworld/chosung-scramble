@@ -303,7 +303,7 @@ export class GameStateRoom {
           }
       }
       
-      // 🆕 강제 탈락 처리 (브라우저 종료 시)
+      // 🆕 강제 탈락 처리 (브라우저 종료 시 - 게임 중일 때만)
       if (update.action === 'force_eliminate' && state.gameMode === 'turn') {
           const { playerId } = update;
           if (playerId) {
@@ -341,10 +341,56 @@ export class GameStateRoom {
                   }
               }
               
-              // 현재 턴이었으면 다음 턴으로
-              if (state.currentTurnPlayerId === playerId) {
+              // 현재 턴이었으면 다음 턴으로 (게임 중일 때만)
+              if (state.gameStarted && !state.endTime && state.currentTurnPlayerId === playerId) {
                   await this.nextTurn(state, now, state.players || []);
               }
+          }
+      }
+      
+      // 🆕 정상 나가기 처리 (탈락자/관전자 포함, 게임 중/대기실 모두)
+      if (update.action === 'remove_player' && state.gameMode === 'turn') {
+          const { playerId } = update;
+          if (playerId) {
+              // 🚀 DO의 state.players에서 제거 (슬롯에서 즉시 사라짐)
+              if (state.players && Array.isArray(state.players)) {
+                  state.players = state.players.filter(p => (p.id || p) !== playerId);
+                  console.log(`[턴제] ${playerId} DO에서 제거 (정상 나가기)`);
+              }
+              
+              // eliminatedPlayers에서도 제거 (탈락자가 다시 들어올 수 있도록)
+              if (state.eliminatedPlayers && state.eliminatedPlayers.includes(playerId)) {
+                  state.eliminatedPlayers = state.eliminatedPlayers.filter(id => id !== playerId);
+              }
+              
+              // playerLives에서도 제거 (게임 참여자에서 제외)
+              if (state.playerLives && state.playerLives[playerId] !== undefined) {
+                  delete state.playerLives[playerId];
+              }
+              
+              // turnCount에서도 제거
+              if (state.turnCount && state.turnCount[playerId] !== undefined) {
+                  delete state.turnCount[playerId];
+              }
+              
+              // 🚀 방장이 나간 경우 방장 승계 처리 (DO만)
+              if (state.hostPlayerId === playerId) {
+                  // state.players에서 다음 플레이어를 방장으로
+                  const remainingPlayers = state.players || [];
+                  if (remainingPlayers.length > 0) {
+                      const newHostId = remainingPlayers[0].id || remainingPlayers[0];
+                      state.hostPlayerId = newHostId;
+                      console.log(`[턴제] DO 방장 승계: ${newHostId}가 새 방장이 됨`);
+                  }
+              }
+              
+              // 현재 턴이었으면 다음 턴으로 (게임 중일 때만)
+              if (state.gameStarted && !state.endTime && state.currentTurnPlayerId === playerId) {
+                  await this.nextTurn(state, now, state.players || []);
+              }
+              
+              // 상태 저장
+              await this.persistState(state);
           }
       }
       if (update.action === 'player_rejoin' && state.gameMode === 'turn') {
@@ -874,21 +920,22 @@ async function handleLeaveRoom(request, env) {
   if (roomData.scores) delete roomData.scores[playerId];
   if (roomData.playerWords) delete roomData.playerWords[playerId];
   
-  // 🚀 턴제 모드: 게임 중일 때 DO에서도 제거
-  if (roomData.gameMode === 'turn' && roomData.gameStarted && !roomData.endTime && env.GAME_STATE) {
+  // 🚀 턴제 모드: 게임 상태와 관계없이 항상 DO에서 제거 (탈락자/관전자 포함)
+  if (roomData.gameMode === 'turn' && env.GAME_STATE) {
       try {
           const id = env.GAME_STATE.idFromName(roomId);
           const stub = env.GAME_STATE.get(id);
+          // 🆕 정상 나가기는 remove_player 액션 사용 (게임 중/대기실 모두 처리)
           const removeRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                  action: 'force_eliminate',
+                  action: 'remove_player',
                   playerId: playerId
               })
           });
           await stub.fetch(removeRequest);
-          console.log(`[leave-room] 게임 중 퇴장: DO에서 ${playerId} 제거 완료`);
+          console.log(`[leave-room] 턴제 모드 퇴장: DO에서 ${playerId} 제거 완료`);
           
           // 🆕 DO의 방장 승계 결과 확인 및 KV 동기화
           try {
@@ -898,14 +945,18 @@ async function handleLeaveRoom(request, env) {
               const stateResponse = await stub.fetch(stateRequest);
               if (stateResponse.ok) {
                   const doState = await stateResponse.json();
-                  // DO에서 방장 승계가 일어났으면 KV도 동기화
-                  if (doState.hostPlayerId && doState.hostPlayerId !== roomData.hostId) {
-                      // DO의 players 순서대로 KV의 players 재정렬
-                      if (doState.players && doState.players.length > 0) {
-                          const doPlayerIds = doState.players.map(p => p.id || p);
-                          const kvPlayers = roomData.players.filter(p => doPlayerIds.includes(p.id));
-                          const orderedPlayers = doPlayerIds.map(pid => kvPlayers.find(p => p.id === pid) || doState.players.find(p => (p.id || p) === pid)).filter(Boolean);
+                  // 🆕 DO의 players와 KV의 players 동기화 (제거된 플레이어 반영)
+                  if (doState.players) {
+                      const doPlayerIds = doState.players.map(p => p.id || p);
+                      const kvPlayers = roomData.players.filter(p => doPlayerIds.includes(p.id));
+                      const orderedPlayers = doPlayerIds.map(pid => kvPlayers.find(p => p.id === pid) || doState.players.find(p => (p.id || p) === pid)).filter(Boolean);
+                      // DO의 players 개수와 맞지 않으면 동기화 (제거된 플레이어 반영)
+                      if (orderedPlayers.length !== doPlayerIds.length || orderedPlayers.length !== roomData.players.length) {
                           roomData.players = orderedPlayers;
+                          console.log(`[leave-room] KV players 동기화 완료 (${orderedPlayers.length}명)`);
+                      }
+                      // 방장 승계 확인
+                      if (doState.hostPlayerId && doState.hostPlayerId !== roomData.hostId) {
                           roomData.hostId = doState.hostPlayerId;
                           console.log(`[leave-room] KV 방장 승계 동기화: ${doState.hostPlayerId}`);
                       }
@@ -919,30 +970,12 @@ async function handleLeaveRoom(request, env) {
       }
   }
   
-  // 🚀 게임 중이 아닐 때만 KV에서 직접 방장 승계 처리
-  if (!(roomData.gameMode === 'turn' && roomData.gameStarted && !roomData.endTime) && wasHost && roomData.players.length > 0) {
+  // 🚀 턴제 모드가 아니거나 턴제 모드에서 게임 중이 아닐 때 KV에서 직접 방장 승계 처리
+  // (턴제 모드는 위에서 DO 처리 시 방장 승계도 함께 처리됨)
+  if (roomData.gameMode !== 'turn' && wasHost && roomData.players.length > 0) {
       newHostId = roomData.players[0].id;
       roomData.hostId = newHostId;
-      
-      // 🚀 턴제 모드: DO의 state.hostPlayerId도 업데이트
-      if (roomData.gameMode === 'turn' && env.GAME_STATE) {
-          try {
-              const id = env.GAME_STATE.idFromName(roomId);
-              const stub = env.GAME_STATE.get(id);
-              const updateRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                      action: 'update_host',
-                      hostPlayerId: newHostId
-                  })
-              });
-              await stub.fetch(updateRequest);
-              console.log(`[leave-room] 방장 승계: ${newHostId}가 새 방장이 됨`);
-          } catch (e) {
-              console.error('[leave-room] DO의 hostPlayerId 업데이트 실패 (무시):', e);
-          }
-      }
+      console.log(`[leave-room] 방장 승계: ${newHostId}가 새 방장이 됨 (시간제 모드)`);
   }
   
   if (roomData.players.length === 0) {

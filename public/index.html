@@ -7796,16 +7796,25 @@
             // 대기실 채팅도 숨기기 (멀티플레이 대기 중일 때 표시되는 것)
             document.getElementById('mpWaitingChat')?.classList.add('hidden');
             
-            // 게임 화면 숨기고 시작 화면 표시
+            // 🚀 게임 화면 완전히 숨기기
             document.getElementById('gameScreen').classList.add('hidden');
+            
+            // 🚀 시작 화면 표시 (최초 상태로)
             document.getElementById('gameStartSection').classList.remove('hidden');
             
             // 🚀 모든 모달 닫기 (결과 모달 등)
             document.querySelector('.mp-result-modal')?.remove();
             document.querySelector('.mp-result-overlay')?.remove();
+            document.querySelector('.study-note-modal')?.remove();
+            
+            // 🚀 턴제 타이머 숨기기
+            document.getElementById('turnModeTimer')?.classList.add('hidden');
             
             // 게임 상태 초기화
             resetGame();
+            
+            // 🚀 gameRunning 플래그도 명시적으로 false
+            gameState.gameRunning = false;
             
             // 싱글플레이로 돌아가니 새게임 버튼 복원
             const resetBtn = document.querySelector('.reset-btn');
