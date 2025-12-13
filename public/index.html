@@ -6024,9 +6024,9 @@
                     const turnModeLeaveBtn = document.getElementById('turnModeLeaveBtn');
                     if (turnModeLeaveBtn && roomData.gameMode === 'turn' && roomData.gameStarted && !roomData.endTime) {
                         const isEliminated = roomData.eliminatedPlayers?.includes(multiplayerState.playerId);
-                        // 🆕 관전자 체크: playerLives에 없거나 0인 경우 (게임 참여자가 아님)
-                        const hasPlayerLives = roomData.playerLives?.[multiplayerState.playerId] !== undefined && 
-                                               (roomData.playerLives[multiplayerState.playerId] || 0) > 0;
+                        // 🆕 관전자 체크: playerLives가 undefined인 경우 (게임 참여자가 아님)
+                        // 생명권 0이어도 게임 참여자는 아님 (탈락자는 eliminatedPlayers에 있음)
+                        const hasPlayerLives = roomData.playerLives?.[multiplayerState.playerId] !== undefined;
                         const isSpectator = !isEliminated && !hasPlayerLives;
                         
                         if (isEliminated || isSpectator) {
@@ -6382,7 +6382,7 @@
                 const isEliminated = isTurnMode && isGameStarted && eliminatedSet.has(player.id);
                 
                 // 🆕 관전자 구분: 게임 중인데 게임 참여자가 아닌 경우 (새로 들어온 관전자)
-                const isSpectator = isTurnMode && isGameStarted && !doState.endTime && !gameParticipants.has(player.id) && !isEliminated;
+                const isSpectator = isTurnMode && isGameStarted && !roomData.endTime && !gameParticipants.has(player.id) && !isEliminated;
                 
                 if (isTurnMode) {
                     // 🆕 턴제 모드: 생명권, 턴 횟수 표시

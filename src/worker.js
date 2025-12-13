@@ -258,10 +258,14 @@ export class GameStateRoom {
                       console.log(`[턴제] ${playerId} 탈락!`);
                   }
                   
+                  // 🚀 탈락 상태 저장 (슬롯 업데이트용)
+                  await this.persistState(state);
+                  
                   const activePlayers = (state.players || []).filter(p => !state.eliminatedPlayers.includes(p.id));
-                  if (activePlayers.length === 0) {
+                  if (activePlayers.length <= 1) {
                       state.gameStarted = false;
                       state.endTime = now;
+                      await this.persistState(state);
                       return state;
                   }
                   
