@@ -130,25 +130,11 @@ export class GameStateRoom {
               
               // 🚀 새 라운드 시작 시 관전자도 자동 참여
               // update.players가 있으면 업데이트 (관전자 포함)
-              // 🆕 단, 브라우저 종료로 나간 사람은 제외 (blacklistedPlayers)
-              let playersToInclude = [];
               if (Array.isArray(update.players) && update.players.length > 0) {
-                  // 🆕 브라우저 종료한 사람 제외
-                  const blacklisted = state.blacklistedPlayers || [];
-                  playersToInclude = update.players.filter(p => {
-                      const playerId = p.id || p;
-                      return !blacklisted.includes(playerId);
-                  });
-                  state.players = playersToInclude;
+                  state.players = update.players;
               } else {
-                  // update.players가 없으면 기존 state.players 유지 (단, blacklisted 제외)
-                  const existingPlayers = state.players || [];
-                  const blacklisted = state.blacklistedPlayers || [];
-                  playersToInclude = existingPlayers.filter(p => {
-                      const playerId = p.id || p;
-                      return !blacklisted.includes(playerId);
-                  });
-                  state.players = playersToInclude;
+                  // update.players가 없으면 기존 state.players 유지
+                  // (브라우저 종료로 나간 사람은 이미 state.players에서 제거됨)
               }
               
               const players = state.players || [];
@@ -156,6 +142,7 @@ export class GameStateRoom {
                   // 🆕 모든 플레이어에게 생명권 초기화 (관전자도 자동 참여)
                   players.forEach(player => {
                       const playerId = player.id || player;
+                      // 관전자도 새 라운드에서 참여할 수 있도록 생명권 초기화
                       if (state.playerLives[playerId] === undefined) {
                           state.playerLives[playerId] = 0;
                       }
@@ -295,8 +282,13 @@ export class GameStateRoom {
                   // 🚀 탈락 상태 저장 (슬롯 업데이트용)
                   await this.persistState(state);
                   
-                  const activePlayers = (state.players || []).filter(p => !state.eliminatedPlayers.includes(p.id));
-                  if (activePlayers.length <= 1) {
+                  // 🆕 실제 게임 참여자만 계산 (playerLives가 있는 사람만)
+                  const gameParticipants = (state.players || []).filter(p => {
+                      const playerId = p.id || p;
+                      return state.playerLives?.[playerId] !== undefined && !state.eliminatedPlayers.includes(playerId);
+                  });
+                  
+                  if (gameParticipants.length <= 1) {
                       state.gameStarted = false;
                       state.endTime = now;
                       await this.persistState(state);
@@ -315,13 +307,6 @@ export class GameStateRoom {
       if (update.action === 'force_eliminate' && state.gameMode === 'turn') {
           const { playerId } = update;
           if (playerId) {
-              // 🚀 블랙리스트 추가 (다음 라운드에서 제외)
-              if (!state.blacklistedPlayers) state.blacklistedPlayers = [];
-              if (!state.blacklistedPlayers.includes(playerId)) {
-                  state.blacklistedPlayers.push(playerId);
-                  console.log(`[턴제] ${playerId} 블랙리스트 추가 (브라우저 종료)`);
-              }
-              
               // 🚀 DO의 state.players에서 제거 (슬롯에서 즉시 사라짐)
               if (state.players && Array.isArray(state.players)) {
                   state.players = state.players.filter(p => (p.id || p) !== playerId);
@@ -333,7 +318,28 @@ export class GameStateRoom {
                   state.eliminatedPlayers.push(playerId);
               }
               
+              // playerLives에서도 제거 (게임 참여자에서 제외)
+              if (state.playerLives && state.playerLives[playerId] !== undefined) {
+                  delete state.playerLives[playerId];
+              }
+              
+              // turnCount에서도 제거
+              if (state.turnCount && state.turnCount[playerId] !== undefined) {
+                  delete state.turnCount[playerId];
+              }
+              
               console.log(`[턴제] ${playerId} 강제 탈락 (브라우저 종료)`);
+              
+              // 🚀 방장이 나간 경우 방장 승계 처리 (DO만)
+              if (state.hostPlayerId === playerId) {
+                  // state.players에서 다음 플레이어를 방장으로
+                  const remainingPlayers = state.players || [];
+                  if (remainingPlayers.length > 0) {
+                      const newHostId = remainingPlayers[0].id || remainingPlayers[0];
+                      state.hostPlayerId = newHostId;
+                      console.log(`[턴제] DO 방장 승계: ${newHostId}가 새 방장이 됨`);
+                  }
+              }
               
               // 현재 턴이었으면 다음 턴으로
               if (state.currentTurnPlayerId === playerId) {
@@ -384,7 +390,6 @@ export class GameStateRoom {
               usedWords: [],
               turnCount: {},
               isFirstTurn: true,
-              blacklistedPlayers: [] // 🆕 브라우저 종료한 사람 블랙리스트
           };
           await this.persistState(snapshot);
       }
@@ -398,7 +403,6 @@ export class GameStateRoom {
       if (!snapshot.usedWords) snapshot.usedWords = [];
       if (!snapshot.turnCount) snapshot.turnCount = {};
       if (snapshot.isFirstTurn === undefined) snapshot.isFirstTurn = true;
-      if (!snapshot.blacklistedPlayers) snapshot.blacklistedPlayers = []; // 🆕 블랙리스트 초기화
       return snapshot;
   }
 
@@ -885,12 +889,38 @@ async function handleLeaveRoom(request, env) {
           });
           await stub.fetch(removeRequest);
           console.log(`[leave-room] 게임 중 퇴장: DO에서 ${playerId} 제거 완료`);
+          
+          // 🆕 DO의 방장 승계 결과 확인 및 KV 동기화
+          try {
+              const stateRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
+                  method: 'GET'
+              });
+              const stateResponse = await stub.fetch(stateRequest);
+              if (stateResponse.ok) {
+                  const doState = await stateResponse.json();
+                  // DO에서 방장 승계가 일어났으면 KV도 동기화
+                  if (doState.hostPlayerId && doState.hostPlayerId !== roomData.hostId) {
+                      // DO의 players 순서대로 KV의 players 재정렬
+                      if (doState.players && doState.players.length > 0) {
+                          const doPlayerIds = doState.players.map(p => p.id || p);
+                          const kvPlayers = roomData.players.filter(p => doPlayerIds.includes(p.id));
+                          const orderedPlayers = doPlayerIds.map(pid => kvPlayers.find(p => p.id === pid) || doState.players.find(p => (p.id || p) === pid)).filter(Boolean);
+                          roomData.players = orderedPlayers;
+                          roomData.hostId = doState.hostPlayerId;
+                          console.log(`[leave-room] KV 방장 승계 동기화: ${doState.hostPlayerId}`);
+                      }
+                  }
+              }
+          } catch (e) {
+              console.error('[leave-room] DO 상태 확인 실패 (무시):', e);
+          }
       } catch (e) {
           console.error('[leave-room] DO에서 플레이어 제거 실패 (무시):', e);
       }
   }
   
-  if (wasHost && roomData.players.length > 0) {
+  // 🚀 게임 중이 아닐 때만 KV에서 직접 방장 승계 처리
+  if (!(roomData.gameMode === 'turn' && roomData.gameStarted && !roomData.endTime) && wasHost && roomData.players.length > 0) {
       newHostId = roomData.players[0].id;
       roomData.hostId = newHostId;
       

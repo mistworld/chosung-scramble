@@ -6786,11 +6786,17 @@
             
             let results;
             if (isTurnMode) {
-                // 턴제 모드: 탈락하지 않은 플레이어 = 승자, 탈락한 플레이어 = 탈락자
-                const activePlayers = (roomData.players || []).filter(p => 
+                // 🆕 턴제 모드: 실제 게임 참여자만 표시 (playerLives가 있는 사람만)
+                const gameParticipants = (roomData.players || []).filter(p => {
+                    const playerId = p.id || p;
+                    return roomData.playerLives?.[playerId] !== undefined;
+                });
+                
+                // 게임 참여자 중 탈락하지 않은 플레이어 = 승자, 탈락한 플레이어 = 탈락자
+                const activePlayers = gameParticipants.filter(p => 
                     !roomData.eliminatedPlayers?.includes(p.id)
                 );
-                const eliminatedPlayers = (roomData.players || []).filter(p => 
+                const eliminatedParticipants = gameParticipants.filter(p => 
                     roomData.eliminatedPlayers?.includes(p.id)
                 );
                 
@@ -6802,8 +6808,8 @@
                     isWinner: true
                 }));
                 
-                // 탈락자 추가
-                eliminatedPlayers.forEach((player, index) => {
+                // 탈락한 게임 참여자 추가
+                eliminatedParticipants.forEach((player, index) => {
                     results.push({
                         id: player.id,
                         name: player.name,
