@@ -415,7 +415,9 @@ export class GameStateRoom {
           console.log(`[턴제] currentTurnPlayerId(${state.currentTurnPlayerId})가 activePlayers에 없음. 첫 번째 플레이어로 설정`);
           state.currentTurnPlayerId = activePlayers[0].id;
           state.turnStartTime = now;
-          state.isFirstTurn = true;
+          // 🚀 탈락 발생 시 isFirstTurn을 true로 설정하지 않음 (5초 유지)
+          // 게임 시작 시에만 isFirstTurn = true
+          state.isFirstTurn = false; // 탈락 후 턴 전환은 5초 유지
           await this.persistState(state);
           return;
       }
@@ -426,6 +428,8 @@ export class GameStateRoom {
       state.currentTurnPlayerId = nextPlayer.id;
       
       state.turnStartTime = now;
+      // 🚀 탈락 발생 후 턴 전환도 5초 유지 (isFirstTurn = false)
+      // 게임 시작 시에만 isFirstTurn = true로 설정됨
       state.isFirstTurn = false;
       
       if (state.playerLives[state.currentTurnPlayerId] === undefined) {

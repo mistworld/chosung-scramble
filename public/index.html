@@ -5808,42 +5808,30 @@
                         !roomData.endTime &&
                         !gameState.gameRunning) { // 게임이 실행 중이 아니면 (아직 참여 안 함)
                         
-                        // 🆕 관전자 체크: playerLives에 없거나 0인 경우 (게임 참여자가 아님)
-                        const hasPlayerLives = roomData.playerLives?.[multiplayerState.playerId] !== undefined;
+                        // 🚀 게임 중 입장한 사람은 무조건 관전만 (다음 라운드부터 참여)
+                        // gameState.gameRunning이 false이고 게임이 시작되어 있으면 게임 중 입장
+                        // 이 경우 무조건 관전자로 처리
                         
-                        if (!hasPlayerLives) {
-                            // 관전자 모드: 게임에 참여하지 않고 관전만
-                            console.log(`👁️ [관전자 모드] 게임 진행 중 관전 (라운드 ${serverRound})`);
-                            
-                            // 게임 화면 숨기고 대기실 상태 유지
-                            document.getElementById('gameScreen').classList.add('hidden');
-                            document.getElementById('gameStartSection').classList.remove('hidden');
-                            
-                            // 채팅창과 슬롯은 표시
-                            document.getElementById('playerSlotsLeft')?.classList.remove('hidden');
-                            document.getElementById('chatContainer')?.classList.remove('hidden');
-                            
-                            // 관전자에게 나가기 버튼 표시
-                            const turnModeLeaveBtn = document.getElementById('turnModeLeaveBtn');
-                            if (turnModeLeaveBtn) {
-                                turnModeLeaveBtn.classList.remove('hidden');
-                                turnModeLeaveBtn.style.display = 'block';
-                            }
-                            
-                            // 다음 라운드부터 자동 참여는 라운드 시작 감지에서 처리됨
-                            return;
-                        } else {
-                            // 게임 참여자: 정상 참여
-                            console.log(`🟡 [중간 합류] 게임 진행 중 참여! (라운드 ${serverRound}, 남은 시간: ${roomData.timeLeft || '계산 중'})`);
-                            
-                            // 라운드 번호 및 점수 팝업 상태 업데이트
-                            multiplayerState.currentRound = serverRound;
-                            multiplayerState.previousWordCounts = {};
-                            
-                            // 게임 참여
-                            joinActiveGame(roomData);
-                            return;
+                        // 관전자 모드: 게임에 참여하지 않고 관전만
+                        console.log(`👁️ [관전자 모드] 게임 진행 중 관전 (라운드 ${serverRound})`);
+                        
+                        // 게임 화면 숨기고 대기실 상태 유지
+                        document.getElementById('gameScreen').classList.add('hidden');
+                        document.getElementById('gameStartSection').classList.remove('hidden');
+                        
+                        // 채팅창과 슬롯은 표시
+                        document.getElementById('playerSlotsLeft')?.classList.remove('hidden');
+                        document.getElementById('chatContainer')?.classList.remove('hidden');
+                        
+                        // 관전자에게 나가기 버튼 표시
+                        const turnModeLeaveBtn = document.getElementById('turnModeLeaveBtn');
+                        if (turnModeLeaveBtn) {
+                            turnModeLeaveBtn.classList.remove('hidden');
+                            turnModeLeaveBtn.style.display = 'block';
                         }
+                        
+                        // 다음 라운드부터 자동 참여는 라운드 시작 감지에서 처리됨
+                        return;
                     }
                     
                     // 3. 플레이어 수 변경 감지 및 방장 변경 체크
@@ -6018,6 +6006,14 @@
                     }
                     
                     // 슬롯 업데이트 (생명권, 턴 횟수)
+                    // 🆕 디버깅: 탈락자 슬롯 확인
+                    if (isTurnMode && isGameStarted) {
+                        console.log('[슬롯 디버그]', {
+                            players: roomData.players?.map(p => ({ id: p.id, name: p.name })),
+                            eliminatedPlayers: roomData.eliminatedPlayers,
+                            playerLives: roomData.playerLives
+                        });
+                    }
                     updateScoreboard(roomData);
                     
                     // 🆕 나가기 버튼 표시 로직 (탈락자 + 관전자)
@@ -6244,15 +6240,15 @@
                                     const retryData = await retryResponse.json();
                                     // 성공하면 에러 카운터 리셋하고 정상 간격으로 복구
                                     multiplayerState.pollingErrorCount = 0;
-                                    startPolling(); // 정상 간격(500ms)으로 복구
+                                    startPolling(); // 정상 간격(800ms)으로 복구
                                 }
                             } catch (retryError) {
                                 // 재시도 실패는 무시 (다음 주기에서 다시 시도)
                             }
-                        }, 1500);
+                        }, 2000);
                     }
                 }
-            }, 500); // 🆕 1초→500ms로 단축해서 더 빠른 업데이트
+            }, 800); // 🚀 800ms로 조정 (네트워크 오류 감소, 효과음 딜레이 개선)
         }
 
         function stopPolling() {
