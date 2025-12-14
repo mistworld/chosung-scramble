@@ -5363,7 +5363,12 @@
             if (roomData.endTime && 
                 (roomData.gameStarted || (roomData.consonants && roomData.consonants.length > 0))) {
                 // 게임이 실제로 진행 중이거나 초성이 있는 경우만 튕김
-                console.log('[입장] ❌ 게임이 이미 종료된 방입니다');
+                console.log('[입장] ❌ 게임이 이미 종료된 방입니다 (튕김) - 조건:', {
+                    endTime: roomData.endTime,
+                    gameStarted: roomData.gameStarted,
+                    hasConsonants: !!roomData.consonants,
+                    consonantsLength: roomData.consonants?.length || 0
+                });
                 // showToast('게임이 이미 종료되었습니다'); // 제거
                 leaveRoom();
                 return;
@@ -5371,7 +5376,13 @@
             
             // 🚀 게임 종료 후 대기실 상태면 대기실로 입장
             if (roomData.endTime && !roomData.gameStarted && (!roomData.consonants || roomData.consonants.length === 0)) {
-                console.log('[입장] 게임 종료된 방 - 대기실 상태로 입장');
+                console.log('[입장] ✅ 게임 종료된 방 - 대기실 상태로 입장 (튕기지 않음)', {
+                    endTime: roomData.endTime,
+                    gameStarted: roomData.gameStarted,
+                    hasConsonants: !!roomData.consonants,
+                    consonantsLength: roomData.consonants?.length || 0,
+                    playersCount: roomData.players?.length || 0
+                });
                 // 대기실 화면 표시
                 document.getElementById('gameScreen').classList.add('hidden');
                 document.getElementById('gameStartSection').classList.remove('hidden');
@@ -5380,7 +5391,9 @@
                 updateScoreboard(roomData);
                 
                 // 폴링 시작
+                console.log('[입장] 대기실 상태 - startPolling() 호출');
                 startPolling();
+                console.log('[입장] 대기실 상태 - startPolling() 호출 완료, return');
                 return; // ✅ 튕기지 않음
             }
 
