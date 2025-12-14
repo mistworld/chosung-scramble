@@ -1103,24 +1103,23 @@ async function handleGameState(request, env) {
           return jsonResponse({ error: 'Room not found' }, 404);
       }
       const now = Date.now();
-      if (pingPlayerId) {
+              if (pingPlayerId) {
           if (!roomData.lastSeen) roomData.lastSeen = {};
           roomData.lastSeen[pingPlayerId] = now;
-          try {
-              await env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
-                  metadata: {
-                      id: roomId,
-                      createdAt: roomData.createdAt,
-                      playerCount: roomData.players?.length || 0,
-                      gameStarted: roomData.gameStarted || false,
-                      roundNumber: roomData.roundNumber || 0,
-                      title: roomData.title || '초성 배틀방',
-                      gameMode: roomData.gameMode || 'time'
-                  }
-              });
-          } catch (e) {
+          // 🚀 비동기로 처리하여 응답 지연 최소화 (await 제거)
+          env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
+              metadata: {
+                  id: roomId,
+                  createdAt: roomData.createdAt,
+                  playerCount: roomData.players?.length || 0,
+                  gameStarted: roomData.gameStarted || false,
+                  roundNumber: roomData.roundNumber || 0,
+                  title: roomData.title || '초성 배틀방',
+                  gameMode: roomData.gameMode || 'time'
+              }
+          }).catch(e => {
               console.error('[game-state] lastSeen 업데이트 실패 (무시):', e);
-          }
+          });
       }
       let doState = null;
       
@@ -1222,11 +1221,11 @@ async function handleGameState(request, env) {
                       kvPlayers.find(p => p.id === pid) || 
                       finalPlayers.find(p => (p.id || p) === pid)
                   ).filter(Boolean);
-                  // 🚀 DO의 players 개수와 일치하면 KV 동기화
+                  // 🚀 DO의 players 개수와 일치하면 KV 동기화 (비동기로 처리하여 응답 지연 최소화)
                   if (orderedPlayers.length === finalPlayers.length) {
                       roomData.players = orderedPlayers;
-                      // 🚀 동기적으로 KV 업데이트 (슬롯 동기화 보장을 위해 await)
-                      await env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
+                      // 🚀 비동기로 KV 업데이트 (DO가 단일 소스이므로 즉시 응답 가능)
+                      env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
                           metadata: {
                               id: roomId,
                               roomNumber: roomData.roomNumber || 0,
