@@ -299,7 +299,8 @@ export class GameStateRoom {
                   if (gameParticipants.length <= 1) {
                       state.gameStarted = false;
                       state.endTime = now;
-                      await this.persistState(state);
+                      state.consonants = []; // 🚀 게임 종료 시 초성 초기화 (대기실 상태로 만들기 위해)
+                      await this.persistState(state, true); // 🚀 KV 동기화 추가
                       return state;
                   }
                   
@@ -360,6 +361,7 @@ export class GameStateRoom {
               if (gameParticipants.length <= 1 && state.gameStarted && !state.endTime) {
                   state.gameStarted = false;
                   state.endTime = now;
+                  state.consonants = []; // 🚀 게임 종료 시 초성 초기화 (대기실 상태로 만들기 위해)
                   state.gameEndedReason = 'player_left'; // 🆕 종료 이유 플래그
                   await this.persistState(state, true); // 🚀 KV 동기화 필수!
                   console.log(`[턴제] 플레이어 이탈로 게임 종료 (남은 참여자: ${gameParticipants.length}명)`);
@@ -425,8 +427,9 @@ export class GameStateRoom {
               if (gameParticipants.length <= 1 && state.gameStarted && !state.endTime) {
                   state.gameStarted = false;
                   state.endTime = now;
+                  state.consonants = []; // 🚀 게임 종료 시 초성 초기화 (대기실 상태로 만들기 위해)
                   // 일반 종료 (게임 종료 이유 플래그 없음)
-                  await this.persistState(state);
+                  await this.persistState(state, true); // 🚀 KV 동기화 추가
                   console.log(`[턴제] 정상 나가기로 게임 종료 (남은 참여자: ${gameParticipants.length}명)`);
                   return state; // nextTurn 호출 안 함
               }
