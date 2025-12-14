@@ -5228,22 +5228,10 @@
 
         async function joinRoomWithName(roomId, playerName) {
             try {
-                // 🆕 탈락자 재입장 체크: 먼저 현재 방 상태 확인
-                let isEliminatedRejoin = false;
+                // 🆕 playerId 생성 (서버에서 탈락자 재입장 처리하므로 클라이언트에서 체크 불필요)
                 const previousPlayerId = localStorage.getItem(`lastPlayerId_${roomId}`);
-                
                 if (previousPlayerId) {
-                    // 이전 playerId로 탈락자 여부 확인
-                    const currentRoomData = await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${roomId}`).then(r => r.json()).catch(() => null);
-                    if (currentRoomData?.eliminatedPlayers?.includes(previousPlayerId)) {
-                        isEliminatedRejoin = true;
-                    }
-                }
-                
-                // 🆕 localStorage 5분 제한 완전히 제거 (탈락자든 새 유저든 자유롭게 입장 가능)
-                
-                // 🆕 탈락자 재입장인 경우 이전 playerId 재사용, 아니면 새로 생성
-                if (isEliminatedRejoin && previousPlayerId) {
+                    // 이전 playerId가 있으면 재사용 (서버에서 적절히 처리)
                     multiplayerState.playerId = previousPlayerId;
                 } else {
                     multiplayerState.playerId = 'player_' + Date.now();
@@ -5952,7 +5940,9 @@
                         multiplayerState.lastPlayerCount = currentCount;
                     }
                     
-                    // 🆕 항상 슬롯 업데이트 (게임 실행 중이어도 플레이어 목록 동기화)
+                    // 🚀 항상 슬롯 업데이트 (게임 실행 중이어도 플레이어 목록 동기화)
+                    // 플레이어 나가기/입장 시 즉시 반영되도록 매 폴링마다 호출
+                    console.log('[폴링] 슬롯 업데이트 - players:', roomData.players?.map(p => ({ id: p.id, name: p.name })));
                     updateScoreboard(roomData);
                 
                 // 🆕 턴제 모드: 턴 전환 감지 및 타이머 업데이트
@@ -6050,8 +6040,8 @@
                         multiplayerState.lastPlayerLives = { ...currentLives };
                     }
                     
-                    // 슬롯 업데이트 (생명권, 턴 횟수)
-                    updateScoreboard(roomData);
+                    // 🚀 슬롯 업데이트 (생명권, 턴 횟수) - 위에서 이미 호출됨, 중복이지만 생명권 변화 즉시 반영을 위해 유지
+                    // updateScoreboard(roomData); // 위 5944줄에서 이미 호출됨 (중복 방지)
                     
                     // 🆕 나가기 버튼 표시 로직 (탈락자 + 관전자)
                     const turnModeLeaveBtn = document.getElementById('turnModeLeaveBtn');
@@ -6088,8 +6078,8 @@
                         }
                     }
                 } else if (gameState.gameRunning) {
-                    // 시간제 모드: 기존 슬롯 업데이트
-                    updateScoreboard(roomData);
+                    // 시간제 모드: 슬롯 업데이트 (위에서 이미 호출됨, 중복이지만 안전을 위해 유지)
+                    // updateScoreboard(roomData); // 🚀 위에서 이미 호출됨 (중복 방지)
                 }
                 
                 // 🆕 방장 상태 동기화 (플레이어 수 변경이 없어도 체크)
@@ -6277,7 +6267,7 @@
                                     const retryData = await retryResponse.json();
                                     // 성공하면 에러 카운터 리셋하고 정상 간격으로 복구
                                     multiplayerState.pollingErrorCount = 0;
-                                    startPolling(); // 정상 간격(800ms)으로 복구
+                                    startPolling(); // 정상 간격(500ms)으로 복구
                                 }
                             } catch (retryError) {
                                 // 재시도 실패는 무시 (다음 주기에서 다시 시도)
@@ -6319,6 +6309,9 @@
                 console.warn('[슬롯] roomData.players가 없거나 배열이 아님:', roomData);
                 roomData.players = [];
             }
+            
+            // 🚀 디버깅: 슬롯 업데이트 시 players 목록 로그
+            console.log('[슬롯 업데이트] players:', roomData.players.map(p => ({ id: p.id, name: p.name })), '총', roomData.players.length, '명');
             
             // 🚀 슬롯 오류 방지: player 객체 검증 및 필터링
             const validPlayers = roomData.players.filter(player => {
@@ -6406,7 +6399,17 @@
             }
             
             // 🆕 모든 플레이어 표시 (탈락자 포함), 단 게임 중에는 게임 참여 여부 구분
+            // 🚀 게임 중일 때: 게임 참여자만 표시 (관전자는 별도 처리)
+            // 🚀 대기실/종료 후: 모든 플레이어 표시
             const allPlayersForSlots = sortedPlayers;
+            
+            // 🚀 디버깅: 슬롯 업데이트 전 상태 로그
+            if (isTurnMode && isGameStarted && !roomData.endTime) {
+                console.log('[슬롯] 턴제 게임 중 - players:', allPlayersForSlots.map(p => ({ id: p.id, name: p.name })), 
+                    '참여자:', Array.from(gameParticipants), 
+                    '탈락:', Array.from(eliminatedSet),
+                    '관전자:', allPlayersForSlots.filter(p => !gameParticipants.has(p.id) && !eliminatedSet.has(p.id)).map(p => p.id));
+            }
             
             for (let i = 0; i < allPlayersForSlots.length && i < maxSlots; i++) {
                 const player = allPlayersForSlots[i];

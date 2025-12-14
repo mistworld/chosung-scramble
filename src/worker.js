@@ -397,8 +397,10 @@ export class GameStateRoom {
           if (playerId) {
               // 🚀 DO의 state.players에서 제거 (슬롯에서 즉시 사라짐)
               if (state.players && Array.isArray(state.players)) {
+                  const beforeCount = state.players.length;
                   state.players = state.players.filter(p => (p.id || p) !== playerId);
-                  console.log(`[턴제] ${playerId} DO에서 제거 (정상 나가기)`);
+                  const afterCount = state.players.length;
+                  console.log(`[턴제] ${playerId} DO에서 제거 (정상 나가기) ${beforeCount}명 → ${afterCount}명`, state.players.map(p => ({ id: (p.id || p), name: (p.name || '이름없음') })));
               }
               
               // eliminatedPlayers에서도 제거 (탈락자가 다시 들어올 수 있도록)
@@ -999,10 +1001,17 @@ async function handleLeaveRoom(request, env) {
                   playerId: playerId
               })
           });
-          await stub.fetch(removeRequest);
-          console.log(`[leave-room] 턴제 모드 퇴장: DO에서 ${playerId} 제거 완료`);
+          // 🚀 remove_player 액션 완료 대기 (persistState 완료 보장)
+          const removeResponse = await stub.fetch(removeRequest);
+          if (removeResponse.ok) {
+              const removeResult = await removeResponse.json();
+              console.log(`[leave-room] 턴제 모드 퇴장: DO에서 ${playerId} 제거 완료`, removeResult?.players?.length || 0, '명 남음');
+          }
           
           // 🆕 DO의 방장 승계 결과 확인 및 KV 동기화 (확실하게 반영)
+          // 🚀 약간의 지연을 두어 persistState 완료 보장 (DO는 비동기 처리되므로)
+          await new Promise(resolve => setTimeout(resolve, 50));
+          
           try {
               const stateRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
                   method: 'GET'
@@ -1015,9 +1024,9 @@ async function handleLeaveRoom(request, env) {
                       const doPlayerIds = doState.players.map(p => p.id || p);
                       const kvPlayers = roomData.players.filter(p => doPlayerIds.includes(p.id));
                       const orderedPlayers = doPlayerIds.map(pid => kvPlayers.find(p => p.id === pid) || doState.players.find(p => (p.id || p) === pid)).filter(Boolean);
-                      // 🚀 DO의 players를 KV에 반영 (항상 동기화하여 일관성 보장)
-                      roomData.players = orderedPlayers;
-                      console.log(`[leave-room] KV players 동기화 완료 (${orderedPlayers.length}명, DO 기준)`);
+                  // 🚀 DO의 players를 KV에 반영 (항상 동기화하여 일관성 보장)
+                  roomData.players = orderedPlayers;
+                  console.log(`[leave-room] KV players 동기화 완료 (${orderedPlayers.length}명, DO 기준)`, orderedPlayers.map(p => ({ id: p.id, name: p.name })));
                       
                       // 방장 승계 확인
                       if (doState.hostPlayerId && doState.hostPlayerId !== roomData.hostId) {
@@ -1244,6 +1253,8 @@ async function handleGameState(request, env) {
       // 시간제 모드: KV의 players 사용 (DO는 게임 상태만 관리)
       
       doState.players = finalPlayers;
+      // 🚀 디버깅: game-state 응답 시 players 로그
+      console.log(`[game-state] ${roomId}: finalPlayers=${finalPlayers.length}명`, finalPlayers.map(p => ({ id: (p.id || p), name: (p.name || '이름없음') })));
       doState.maxPlayers = roomData.maxPlayers || 5;
       doState.acceptingPlayers = roomData.acceptingPlayers !== false;
       doState.createdAt = roomData.createdAt;
