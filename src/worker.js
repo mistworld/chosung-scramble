@@ -81,7 +81,7 @@ export class GameStateRoom {
           if (hasNewPlayers || update.players.length !== state.players?.length) {
               state.players = update.players;
               console.log(`[턴제] players 동기화: ${state.players.map(p => p.id || p).join(', ')} (${state.players.length}명, 재입장 포함)`);
-              await this.persistState(state);
+              await this.persistState(state, true); // 🚀 KV 동기화 플래그
           } else {
               console.log(`[턴제] players 동기화 불필요 (동일): ${state.players?.length || 0}명`);
           }
@@ -433,8 +433,8 @@ export class GameStateRoom {
                   await this.nextTurn(state, now, state.players || []);
               }
               
-              // 상태 저장
-              await this.persistState(state);
+              // 상태 저장 (players 변경이므로 KV 동기화)
+              await this.persistState(state, true);
           }
       }
       if (update.action === 'player_rejoin' && state.gameMode === 'turn') {
@@ -493,6 +493,8 @@ export class GameStateRoom {
       if (!snapshot.usedWords) snapshot.usedWords = [];
       if (!snapshot.turnCount) snapshot.turnCount = {};
       if (snapshot.isFirstTurn === undefined) snapshot.isFirstTurn = true;
+      // 🚀 playersVersion 초기화 (없으면 0)
+      if (snapshot.playersVersion === undefined) snapshot.playersVersion = 0;
       return snapshot;
   }
 
@@ -501,10 +503,75 @@ export class GameStateRoom {
       return await this.state.storage.get('roomState');
   }
 
-  async persistState(state) {
+  async persistState(state, shouldSyncKV = false) {
       // 🚀 persistState 후 캐시 무효화 (다음 getState() 호출 시 최신 상태 가져옴)
       this.roomStatePromise = null;
+      
+      // 🚀 playersVersion 증가 (players가 변경될 때만)
+      if (shouldSyncKV) {
+          state.playersVersion = (state.playersVersion || 0) + 1;
+          state.lastPlayersUpdate = Date.now();
+      }
+      
       await this.state.storage.put('roomState', state);
+      
+      // 🚀 DO 변경 시 KV 즉시 동기화 (players 변경 시에만)
+      if (shouldSyncKV && this.env.ROOM_LIST && state.id) {
+          this.syncKVFromDO(state).catch(e => {
+              console.error('[DO→KV 동기화 실패]:', e);
+          });
+      }
+  }
+
+  // 🚀 DO → KV 즉시 동기화 함수
+  async syncKVFromDO(state) {
+      try {
+          const roomId = state.id;
+          const roomData = await this.env.ROOM_LIST.get(roomId, 'json');
+          if (!roomData) {
+              console.log(`[DO→KV] ${roomId} KV에 방 데이터 없음, 동기화 스킵`);
+              return;
+          }
+          
+          // DO의 players를 KV에 반영
+          if (state.players && Array.isArray(state.players)) {
+              const doPlayerIds = new Set(state.players.map(p => p.id || p));
+              const kvPlayers = (roomData.players || []).filter(p => doPlayerIds.has(p.id));
+              
+              // DO의 순서대로 정렬
+              const orderedPlayers = state.players.map(doPlayer => {
+                  const pid = doPlayer.id || doPlayer;
+                  return kvPlayers.find(p => p.id === pid) || doPlayer;
+              }).filter(Boolean);
+              
+              roomData.players = orderedPlayers;
+              roomData.playersVersion = state.playersVersion || 0;
+              roomData.lastPlayersUpdate = state.lastPlayersUpdate || Date.now();
+              
+              // 방장도 동기화
+              if (state.hostPlayerId) {
+                  roomData.hostId = state.hostPlayerId;
+              }
+              
+              // KV 업데이트 (비동기로 처리하여 응답 지연 없음)
+              await this.env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
+                  metadata: {
+                      id: roomId,
+                      roomNumber: roomData.roomNumber || 0,
+                      createdAt: roomData.createdAt,
+                      playerCount: orderedPlayers.length,
+                      gameStarted: roomData.gameStarted || false,
+                      roundNumber: roomData.roundNumber || 0,
+                      title: roomData.title || '초성 배틀방',
+                      gameMode: roomData.gameMode || 'time'
+                  }
+              });
+              
+              console.log(`[DO→KV] ${roomId} players 동기화 완료: ${orderedPlayers.length}명 (v${state.playersVersion})`);
+          }
+      } catch (e) {
+          console.error('[DO→KV 동기화 에러]:', e);
+      }
   }
 
   async nextTurn(state, now, players = []) {
@@ -1250,8 +1317,18 @@ async function handleGameState(request, env) {
       // 시간제 모드: KV의 players 사용 (DO는 게임 상태만 관리)
       
       doState.players = finalPlayers;
+      
+      // 🚀 playersVersion 포함 (DO에서 가져옴)
+      if (doState.playersVersion !== undefined) {
+          doState.playersVersion = doState.playersVersion;
+      } else if (roomData.playersVersion !== undefined) {
+          doState.playersVersion = roomData.playersVersion;
+      } else {
+          doState.playersVersion = 0;
+      }
+      
       // 🚀 디버깅: game-state 응답 시 players 로그 (제거된 플레이어 확인용)
-      console.log(`[game-state] ${roomId}: finalPlayers=${finalPlayers.length}명`, finalPlayers.map(p => ({ id: (p.id || p), name: (p.name || '이름없음') })), 
+      console.log(`[game-state] ${roomId}: finalPlayers=${finalPlayers.length}명 (v${doState.playersVersion})`, finalPlayers.map(p => ({ id: (p.id || p), name: (p.name || '이름없음') })), 
                   `DO 원본=${originalDoPlayers?.length || 0}명`, originalDoPlayers?.map(p => ({ id: (p.id || p), name: (p.name || '이름없음') })) || [],
                   `KV players=${roomData.players?.length || 0}명`);
       doState.maxPlayers = roomData.maxPlayers || 5;
