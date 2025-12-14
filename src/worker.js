@@ -361,7 +361,7 @@ export class GameStateRoom {
                   state.gameStarted = false;
                   state.endTime = now;
                   state.gameEndedReason = 'player_left'; // 🆕 종료 이유 플래그
-                  await this.persistState(state);
+                  await this.persistState(state, true); // 🚀 KV 동기화 필수!
                   console.log(`[턴제] 플레이어 이탈로 게임 종료 (남은 참여자: ${gameParticipants.length}명)`);
                   return state; // nextTurn 호출 안 함
               }
@@ -369,6 +369,9 @@ export class GameStateRoom {
               // 현재 턴이었으면 다음 턴으로 (게임 중일 때만)
               if (state.gameStarted && !state.endTime && state.currentTurnPlayerId === playerId) {
                   await this.nextTurn(state, now, state.players || []);
+              } else {
+                  // 🚀 players 변경이므로 항상 KV 동기화 (게임 종료되지 않은 경우)
+                  await this.persistState(state, true);
               }
           }
       }
