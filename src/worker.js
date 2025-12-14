@@ -181,36 +181,31 @@ export class GameStateRoom {
               state.turnCount = {};
               state.isFirstTurn = true;
               
-              // 🚀 게임 시작 시 players 초기화 (블랙리스트 제외)
-              let playersToInclude = [];
+              // 🚀 게임 시작 시 players 초기화
               if (Array.isArray(update.players) && update.players.length > 0) {
-                  // 🆕 브라우저 종료한 사람 제외
-                  const blacklisted = state.blacklistedPlayers || [];
-                  playersToInclude = update.players.filter(p => {
-                      const playerId = p.id || p;
-                      return !blacklisted.includes(playerId);
-                  });
-                  state.players = playersToInclude;
+                  state.players = update.players;
               } else if (!state.players || state.players.length === 0) {
                   // update.players가 없고 state.players도 없으면 빈 배열
                   state.players = [];
-              } else {
-                  // 기존 state.players 유지하되 블랙리스트 제외
-                  const blacklisted = state.blacklistedPlayers || [];
-                  playersToInclude = state.players.filter(p => {
-                      const playerId = p.id || p;
-                      return !blacklisted.includes(playerId);
-                  });
-                  state.players = playersToInclude;
               }
+              // 기존 state.players 유지 (update.players가 없으면)
               
+              // 🆕 모든 플레이어에게 playerLives, turnCount 초기화
               const players = state.players || [];
               if (players.length > 0) {
+                  players.forEach(player => {
+                      const playerId = player.id || player;
+                      if (state.playerLives[playerId] === undefined) {
+                          state.playerLives[playerId] = 0;
+                      }
+                      if (state.turnCount[playerId] === undefined) {
+                          state.turnCount[playerId] = 0;
+                      }
+                  });
+                  
                   const firstPlayer = players[0];
                   state.currentTurnPlayerId = firstPlayer.id;
                   state.turnStartTime = now;
-                  state.playerLives[firstPlayer.id] = 0;
-                  state.turnCount[firstPlayer.id] = 0;
               } else {
                   state.currentTurnPlayerId = update.hostPlayerId || state.currentTurnPlayerId || null;
                   state.turnStartTime = now;
@@ -341,6 +336,23 @@ export class GameStateRoom {
                   }
               }
               
+              // 🆕 게임 종료 조건 체크 (force_eliminate 직후)
+              // playerLives가 있는 실제 게임 참여자만 계산
+              const gameParticipants = (state.players || []).filter(p => {
+                  const pid = p.id || p;
+                  return state.playerLives?.[pid] !== undefined && !state.eliminatedPlayers.includes(pid);
+              });
+              
+              // 🆕 남은 참여자가 1명 이하면 "플레이어 이탈로 인한 종료"로 처리
+              if (gameParticipants.length <= 1 && state.gameStarted && !state.endTime) {
+                  state.gameStarted = false;
+                  state.endTime = now;
+                  state.gameEndedReason = 'player_left'; // 🆕 종료 이유 플래그
+                  await this.persistState(state);
+                  console.log(`[턴제] 플레이어 이탈로 게임 종료 (남은 참여자: ${gameParticipants.length}명)`);
+                  return state; // nextTurn 호출 안 함
+              }
+              
               // 현재 턴이었으면 다음 턴으로 (게임 중일 때만)
               if (state.gameStarted && !state.endTime && state.currentTurnPlayerId === playerId) {
                   await this.nextTurn(state, now, state.players || []);
@@ -382,6 +394,23 @@ export class GameStateRoom {
                       state.hostPlayerId = newHostId;
                       console.log(`[턴제] DO 방장 승계: ${newHostId}가 새 방장이 됨`);
                   }
+              }
+              
+              // 🆕 게임 종료 조건 체크 (remove_player 직후)
+              // playerLives가 있는 실제 게임 참여자만 계산
+              const gameParticipants = (state.players || []).filter(p => {
+                  const pid = p.id || p;
+                  return state.playerLives?.[pid] !== undefined && !state.eliminatedPlayers.includes(pid);
+              });
+              
+              // 🆕 남은 참여자가 1명 이하면 게임 종료
+              if (gameParticipants.length <= 1 && state.gameStarted && !state.endTime) {
+                  state.gameStarted = false;
+                  state.endTime = now;
+                  // 일반 종료 (게임 종료 이유 플래그 없음)
+                  await this.persistState(state);
+                  console.log(`[턴제] 정상 나가기로 게임 종료 (남은 참여자: ${gameParticipants.length}명)`);
+                  return state; // nextTurn 호출 안 함
               }
               
               // 현재 턴이었으면 다음 턴으로 (게임 중일 때만)
@@ -476,14 +505,18 @@ export class GameStateRoom {
           return;
       }
       
-      // 🆕 탈락자 제외한 활성 플레이어 계산
+      // 🆕 게임 종료 조건: 실제 게임 참여자(gameParticipants)만 계산 (관전자 제외)
+      // playerLives가 있는 사람만 게임 참여자로 간주
       const eliminatedSet = new Set(state.eliminatedPlayers || []);
-      const activePlayers = playerList.filter(p => !eliminatedSet.has(p.id));
+      const gameParticipants = playerList.filter(p => {
+          const pid = p.id || p;
+          return state.playerLives?.[pid] !== undefined && !eliminatedSet.has(pid);
+      });
       
-      // 🚀 게임 종료 조건: activePlayers.length <= 1일 때 게임 종료
-      if (activePlayers.length <= 1) {
-          if (activePlayers.length === 0) {
-              console.log('[턴제] nextTurn: 모든 플레이어 탈락 - 게임 종료');
+      // 🚀 게임 종료 조건: gameParticipants.length <= 1일 때 게임 종료
+      if (gameParticipants.length <= 1) {
+          if (gameParticipants.length === 0) {
+              console.log('[턴제] nextTurn: 모든 게임 참여자 탈락 - 게임 종료');
           } else {
               console.log('[턴제] nextTurn: 1명만 남음 - 게임 종료 (승자 결정)');
           }
@@ -496,17 +529,18 @@ export class GameStateRoom {
       console.log('[턴제] nextTurn 호출:', {
           currentTurn: state.currentTurnPlayerId,
           players: playerList.map(p => p.id),
-          activePlayers: activePlayers.map(p => p.id),
+          gameParticipants: gameParticipants.map(p => p.id),
           eliminated: state.eliminatedPlayers
       });
       
       // 🆕 현재 턴 플레이어의 인덱스 찾기 (정확한 턴 순서 보장)
-      const currentIndex = activePlayers.findIndex(p => p.id === state.currentTurnPlayerId);
+      // gameParticipants 기준으로 턴 순환
+      const currentIndex = gameParticipants.findIndex(p => p.id === state.currentTurnPlayerId);
       
-      // 🆕 currentIndex가 -1이면 (현재 턴 플레이어가 activePlayers에 없으면) 첫 번째 플레이어로 설정
+      // 🆕 currentIndex가 -1이면 (현재 턴 플레이어가 gameParticipants에 없으면) 첫 번째 플레이어로 설정
       if (currentIndex === -1) {
-          console.log(`[턴제] currentTurnPlayerId(${state.currentTurnPlayerId})가 activePlayers에 없음. 첫 번째 플레이어로 설정`);
-          state.currentTurnPlayerId = activePlayers[0].id;
+          console.log(`[턴제] currentTurnPlayerId(${state.currentTurnPlayerId})가 gameParticipants에 없음. 첫 번째 플레이어로 설정`);
+          state.currentTurnPlayerId = gameParticipants[0].id;
           state.turnStartTime = now;
           // 🚀 탈락 발생 시 isFirstTurn을 true로 설정하지 않음 (5초 유지)
           // 게임 시작 시에만 isFirstTurn = true
@@ -516,8 +550,8 @@ export class GameStateRoom {
       }
       
       // 🚀 간단한 턴 전환: 다음 플레이어로 이동 (순환 구조)
-      const nextIndex = (currentIndex + 1) % activePlayers.length;
-      const nextPlayer = activePlayers[nextIndex];
+      const nextIndex = (currentIndex + 1) % gameParticipants.length;
+      const nextPlayer = gameParticipants[nextIndex];
       state.currentTurnPlayerId = nextPlayer.id;
       
       state.turnStartTime = now;
@@ -532,7 +566,7 @@ export class GameStateRoom {
           state.turnCount[state.currentTurnPlayerId] = 0;
       }
       
-      console.log(`[턴제] 턴 전환: ${activePlayers[currentIndex]?.id} → ${state.currentTurnPlayerId} (인덱스: ${currentIndex} → ${nextIndex}, 활성 플레이어: ${activePlayers.length}명)`);
+      console.log(`[턴제] 턴 전환: ${gameParticipants[currentIndex]?.id} → ${state.currentTurnPlayerId} (인덱스: ${currentIndex} → ${nextIndex}, 게임 참여자: ${gameParticipants.length}명)`);
       
       // 🚀 중요: state 변경 후 저장 (게임 종료 버그 방지)
       await this.persistState(state);
@@ -978,7 +1012,8 @@ async function handleLeaveRoom(request, env) {
       console.log(`[leave-room] 방장 승계: ${newHostId}가 새 방장이 됨 (시간제 모드)`);
   }
   
-  if (roomData.players.length === 0) {
+  // 🆕 슬롯 1명만 남았을 때도 방 삭제 (턴제는 2인 이상 필요)
+  if (roomData.players.length <= 1) {
       try {
           await env.ROOM_LIST.delete(roomId);
           try {
@@ -1135,23 +1170,20 @@ async function handleGameState(request, env) {
           }
       }
       
-      // 🚀 게임 중에는 DO의 state.players 우선 사용 (실시간 동기화)
-      // 대기실(게임 시작 전) 또는 종료 모달 상태에서는 KV의 players 사용
+      // 🚀 게임 중: DO의 state.players가 단일 소스 (슬롯 동기화 보장)
+      // 대기실(게임 시작 전) 또는 종료 모달 상태: KV의 players 사용
       let finalPlayers = roomData.players || [];
       if (doState.gameMode === 'turn' && doState.gameStarted && !doState.endTime) {
-          // 게임 중: DO의 state.players 우선 (더 정확한 실시간 상태)
-          if (doState.players && doState.players.length > 0) {
+          // 게임 중: DO의 state.players만 사용 (KV 병합 로직 제거로 일관성 보장)
+          // handleGameState에서 이미 sync_players로 동기화했으므로 DO가 최신 상태
+          if (doState.players && Array.isArray(doState.players) && doState.players.length > 0) {
               finalPlayers = doState.players;
-              // 🚀 새로 들어온 관전자는 KV에 있을 수 있으므로 병합 (중복 제거)
-              const doPlayerIds = new Set(doState.players.map(p => p.id || p));
-              const kvOnlyPlayers = (roomData.players || []).filter(p => {
-                  const playerId = p.id || p;
-                  return !doPlayerIds.has(playerId);
-              });
-              // DO players 뒤에 KV only players 추가 (관전자)
-              finalPlayers = [...doState.players, ...kvOnlyPlayers];
+          } else {
+              // DO에 players가 없으면 KV 사용 (초기 상태)
+              finalPlayers = roomData.players || [];
           }
       }
+      // 대기실/종료 모달 상태: KV의 players 사용 (DO는 게임 상태 없음)
       
       doState.players = finalPlayers;
       doState.maxPlayers = roomData.maxPlayers || 5;

@@ -5395,6 +5395,9 @@
                 document.getElementById('playerSlotsLeft')?.classList.remove('hidden');
                 document.getElementById('chatContainer')?.classList.remove('hidden');
                 
+                // 🆕 슬롯 즉시 업데이트 (제3자가 슬롯에 표시되도록)
+                updateScoreboard(roomData);
+                
                 // 관전자에게 나가기 버튼 표시
                 const turnModeLeaveBtn = document.getElementById('turnModeLeaveBtn');
                 if (turnModeLeaveBtn && roomData.gameMode === 'turn') {
@@ -5747,6 +5750,20 @@
                     clearTimeout(timeoutId);
                     
                     if (!response.ok) {
+                        // 🆕 404 에러: 방이 삭제됨 (슬롯 1명만 남았을 때)
+                        if (response.status === 404) {
+                            console.log('[폴링] 방이 삭제됨 - 다른 플레이어가 없어 시작 화면으로 이동합니다');
+                            
+                            // 종료 모달 제거
+                            document.querySelector('.mp-result-modal')?.remove();
+                            
+                            // 메시지 표시
+                            showToast('다른 플레이어가 없어 시작 화면으로 이동합니다', 3000);
+                            
+                            // 메인 화면으로 이동
+                            leaveRoom();
+                            return;
+                        }
                         throw new Error(`HTTP ${response.status}`);
                     }
                     
@@ -5795,7 +5812,14 @@
                         document.getElementById('gameScreen').classList.add('hidden');
                         document.getElementById('gameStartSection').classList.remove('hidden');
                         
-                        // 결과 화면 표시
+                        // 🆕 플레이어 이탈로 인한 종료인지 확인
+                        if (roomData.gameEndedReason === 'player_left') {
+                            // 플레이어 이탈 메시지 표시
+                            showPlayerLeftMessage();
+                            return;
+                        }
+                        
+                        // 일반 게임 종료 (결과 화면 표시)
                         showFinalResults(roomData);
                         return;
                     }
@@ -5840,6 +5864,9 @@
                         // 채팅창과 슬롯은 표시
                         document.getElementById('playerSlotsLeft')?.classList.remove('hidden');
                         document.getElementById('chatContainer')?.classList.remove('hidden');
+                        
+                        // 🆕 슬롯 즉시 업데이트 (제3자가 슬롯에 표시되도록)
+                        updateScoreboard(roomData);
                         
                         // 관전자에게 나가기 버튼 표시
                         const turnModeLeaveBtn = document.getElementById('turnModeLeaveBtn');
@@ -6725,6 +6752,42 @@
 
         // 🆕 finished 소리 중복 방지 플래그 (gameState에 저장하여 전역 관리)
         if (!gameState.finishedSoundPlaying) gameState.finishedSoundPlaying = false;
+        
+        // 🆕 플레이어 이탈로 인한 게임 종료 메시지 표시
+        function showPlayerLeftMessage() {
+            // 기존 모달 제거
+            const existingModal = document.querySelector('.mp-result-modal');
+            if (existingModal) existingModal.remove();
+            
+            // 게임 화면 숨기기 (이미 숨겨져 있을 수 있음)
+            const gameScreen = document.getElementById('gameScreen');
+            if (gameScreen) gameScreen.classList.add('hidden');
+            const gameStartSection = document.getElementById('gameStartSection');
+            if (gameStartSection) gameStartSection.classList.remove('hidden');
+            
+            // 메시지 모달 생성
+            const modal = document.createElement('div');
+            modal.className = 'mp-result-modal';
+            modal.innerHTML = `
+                <div class="mp-result-overlay"></div>
+                <div class="mp-result-content" style="text-align: center; padding: 40px;">
+                    <div style="font-size: 60px; margin-bottom: 20px;">⚠️</div>
+                    <h2 style="margin: 0 0 20px 0; font-size: 28px; color: #333;">게임 종료</h2>
+                    <p style="margin: 0 0 30px 0; font-size: 18px; color: #666; line-height: 1.6;">
+                        한 명의 유저가 방을 이탈하여<br>게임이 종료되었습니다.
+                    </p>
+                    <button class="mp-result-btn home" onclick="leaveRoom()" style="margin-top: 20px;">
+                        🏠 시작 화면으로
+                    </button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            
+            // 3초 후 자동으로 최초 시작 화면으로 이동
+            setTimeout(() => {
+                leaveRoom();
+            }, 3000);
+        }
         
         function showFinalResults(roomData) {
             // 🆕 이미 모달이 있으면 중복 실행 방지!
@@ -7842,20 +7905,25 @@
                 return;
             }
             
-            // 🆕 탈락자는 게임 중에도 나갈 수 있음
+            // 🆕 턴제 모드: 탈락자 + 관전자는 게임 중에도 나갈 수 있음
             if (gameState.gameRunning && multiplayerState.isMultiplayer && multiplayerState.gameMode === 'turn') {
-                // 턴제 모드에서 탈락자인지 확인
+                // 턴제 모드에서 탈락자 또는 관전자인지 확인
                 const lastRoomData = multiplayerState.lastRoomData;
                 const isEliminated = lastRoomData && lastRoomData.eliminatedPlayers?.includes(multiplayerState.playerId);
+                // 관전자 체크: playerLives가 undefined인 경우 (게임 참여자가 아님)
+                const hasPlayerLives = lastRoomData && lastRoomData.playerLives?.[multiplayerState.playerId] !== undefined;
+                const isSpectator = !isEliminated && !hasPlayerLives;
                 
-                if (!isEliminated) {
-                    // 탈락자가 아니면 나갈 수 없음
-                    showToast('게임 중에는 나갈 수 없습니다');
+                // 실제 게임 참여자는 나가기 버튼 자체가 없으므로 여기까지 오면 안 됨
+                // 하지만 혹시 모를 경우를 대비해 체크
+                if (!isEliminated && !isSpectator) {
+                    // 게임 참여자는 나갈 수 없음 (하지만 나가기 버튼이 없어야 함)
+                    console.warn('[나가기] 게임 참여자가 나가기 시도 - 나가기 버튼이 잘못 표시된 것으로 보임');
                     return;
                 }
-                // 탈락자는 나갈 수 있음
-            } else if (gameState.gameRunning) {
-                // 시간제 모드나 다른 모드에서는 게임 중 나갈 수 없음
+                // 탈락자 또는 관전자는 나갈 수 있음 (토스트 메시지 없이)
+            } else if (gameState.gameRunning && multiplayerState.gameMode !== 'turn') {
+                // 시간제 모드에서는 게임 중 나갈 수 없음
                 showToast('게임 중에는 나갈 수 없습니다');
                 return;
             }
