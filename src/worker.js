@@ -134,15 +134,19 @@ export class GameStateRoom {
               state.turnCount = {};
               state.isFirstTurn = true;
               
-              // 🚀 새 라운드 시작 시 관전자도 자동 참여
-              // 🚀 update.players (KV의 players)를 우선 사용 - 재입장한 관전자도 포함
-              if (Array.isArray(update.players) && update.players.length > 0) {
-                  // 🚀 KV의 players를 사용 (재입장한 관전자 포함)
+              // 🚀 새 라운드 시작 시 players 초기화
+              // 🚀 DO의 state.players를 우선 사용 (KV 무시) - 게임 종료 후 나간 사람 제거 보장
+              // KV의 players는 동기화 지연으로 인해 오래된 데이터일 수 있음
+              if (state.players && Array.isArray(state.players) && state.players.length > 0) {
+                  // DO의 players 사용 (나간 사람은 이미 제거됨)
+                  console.log(`[start_game] players 초기화: DO의 players 사용 (${state.players.length}명)`, state.players.map(p => (p.id || p)));
+              } else if (Array.isArray(update.players) && update.players.length > 0) {
+                  // DO에 없으면 KV 사용 (폴백)
                   state.players = update.players;
-                  console.log(`[start_game] players 초기화: KV의 players 사용 (${state.players.length}명, 재입장 포함)`, state.players.map(p => (p.id || p)));
+                  console.log(`[start_game] players 초기화: KV의 players 사용 (폴백, ${state.players.length}명)`, state.players.map(p => (p.id || p)));
               } else {
-                  // update.players가 없으면 기존 state.players 유지
-                  // (브라우저 종료로 나간 사람은 이미 state.players에서 제거됨)
+                  // 둘 다 없으면 기존 state.players 유지 또는 빈 배열
+                  if (!state.players) state.players = [];
               }
               
               const players = state.players || [];
@@ -190,18 +194,19 @@ export class GameStateRoom {
               state.isFirstTurn = true;
               
               // 🚀 게임 시작 시 players 초기화
-              // 🚀 update.players (KV의 players)를 우선 사용 - 재입장한 관전자도 포함
-              // 재입장한 관전자는 KV에 있으므로 다음 라운드에서 참여 가능해야 함
-              if (Array.isArray(update.players) && update.players.length > 0) {
-                  // 🚀 KV의 players를 사용 (재입장한 관전자 포함)
-                  // 관전자는 나갔다가 다시 들어올 수 있으므로 KV의 최신 상태를 반영
+              // 🚀 DO의 state.players를 우선 사용 (KV 무시) - 게임 종료 후 나간 사람 제거 보장
+              // KV의 players는 동기화 지연으로 인해 오래된 데이터일 수 있음
+              if (state.players && Array.isArray(state.players) && state.players.length > 0) {
+                  // DO의 players 사용 (나간 사람은 이미 제거됨)
+                  console.log(`[new_game] players 초기화: DO의 players 사용 (${state.players.length}명)`, state.players.map(p => (p.id || p)));
+              } else if (Array.isArray(update.players) && update.players.length > 0) {
+                  // DO에 없으면 KV 사용 (폴백)
                   state.players = update.players;
-                  console.log(`[new_game] players 초기화: KV의 players 사용 (${state.players.length}명, 재입장 포함)`, state.players.map(p => (p.id || p)));
-              } else if (!state.players || state.players.length === 0) {
-                  // update.players가 없고 state.players도 없으면 빈 배열
+                  console.log(`[new_game] players 초기화: KV의 players 사용 (폴백, ${state.players.length}명)`, state.players.map(p => (p.id || p)));
+              } else {
+                  // 둘 다 없으면 빈 배열
                   state.players = [];
               }
-              // 기존 state.players 유지 (update.players가 없으면)
               
               // 🆕 모든 플레이어에게 playerLives, turnCount 초기화
               const players = state.players || [];
