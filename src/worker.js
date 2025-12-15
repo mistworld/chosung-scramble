@@ -756,15 +756,22 @@ async function handleRooms(env) {
               
               let playerCount = players.length;
 
-              // 🚀 게임 중이거나 게임 종료 후 대기실 상태면 lastSeen 필터링 안 함 (방 목록에 항상 표시)
+              // 🚀 시간제 대기방: lastSeen 필터링 완화 (안정적인 목록 표시)
+              // 게임 중이거나 게임 종료 후 대기실 상태면 lastSeen 필터링 안 함 (방 목록에 항상 표시)
               // 게임 중에는 lastSeen 업데이트가 제대로 안 될 수 있고, 대기실 상태면 입장 가능해야 함
               if (!roomData.gameStarted && roomData.lastSeen && typeof roomData.lastSeen === 'object' && players.length > 0) {
                   // 대기실 상태에서만 lastSeen 기반 필터링 (활성 플레이어만 카운트)
+                  // 🚀 하지만 시간제 모드는 최소 1명만 있어도 표시 (들락날락 가능)
                   const activePlayers = players.filter(p => {
                       const last = roomData.lastSeen[p.id];
                       return !last || (typeof last === 'number' && (now - last) < STALE_PLAYER_TIMEOUT);
                   });
-                  playerCount = activePlayers.length;
+                  // 시간제 모드: 최소 1명만 있어도 방 목록에 표시
+                  if (roomData.gameMode === 'time' && activePlayers.length === 0 && players.length > 0) {
+                      playerCount = players.length; // 전체 players 수 사용 (들락날락 고려)
+                  } else {
+                      playerCount = activePlayers.length;
+                  }
               }
               // 게임 중이면 players.length 그대로 사용 (lastSeen 필터링 안 함)
               
@@ -805,15 +812,22 @@ async function handleRooms(env) {
               
               let playerCount = players.length;
 
-              // 🚀 게임 중이거나 게임 종료 후 대기실 상태면 lastSeen 필터링 안 함 (방 목록에 항상 표시)
+              // 🚀 시간제 대기방: lastSeen 필터링 완화 (안정적인 목록 표시)
+              // 게임 중이거나 게임 종료 후 대기실 상태면 lastSeen 필터링 안 함 (방 목록에 항상 표시)
               // 게임 중에는 lastSeen 업데이트가 제대로 안 될 수 있고, 대기실 상태면 입장 가능해야 함
               if (!roomData.gameStarted && roomData.lastSeen && typeof roomData.lastSeen === 'object' && players.length > 0) {
                   // 대기실 상태에서만 lastSeen 기반 필터링 (활성 플레이어만 카운트)
+                  // 🚀 하지만 시간제 모드는 최소 1명만 있어도 표시 (들락날락 가능)
                   const activePlayers = players.filter(p => {
                       const last = roomData.lastSeen[p.id];
                       return !last || (typeof last === 'number' && (now - last) < STALE_PLAYER_TIMEOUT);
                   });
-                  playerCount = activePlayers.length;
+                  // 시간제 모드: 최소 1명만 있어도 방 목록에 표시
+                  if (roomData.gameMode === 'time' && activePlayers.length === 0 && players.length > 0) {
+                      playerCount = players.length; // 전체 players 수 사용 (들락날락 고려)
+                  } else {
+                      playerCount = activePlayers.length;
+                  }
               }
               // 게임 중이면 players.length 그대로 사용 (lastSeen 필터링 안 함)
 
@@ -1385,6 +1399,52 @@ async function handleGameState(request, env) {
               }
           } else {
               // DO에 players가 없으면 KV 사용 (초기 상태)
+              finalPlayers = roomData.players || [];
+          }
+      } else {
+          // 🚀 시간제 모드: 게임 중이 아닐 때 비활성 플레이어 정리 (폴링 시 지속적으로)
+          if (!doState.gameStarted && roomData.players && roomData.players.length > 0 && roomData.lastSeen) {
+              const STALE_PLAYER_TIMEOUT = 15 * 1000; // 15초 (비활성 플레이어 감지)
+              const now = Date.now();
+              const activePlayers = roomData.players.filter(p => {
+                  const last = roomData.lastSeen[p.id];
+                  return !last || (typeof last === 'number' && (now - last) < STALE_PLAYER_TIMEOUT);
+              });
+              
+              // 비활성 플레이어가 있으면 KV 업데이트
+              if (activePlayers.length !== roomData.players.length) {
+                  const inactivePlayers = roomData.players.filter(p => {
+                      const last = roomData.lastSeen[p.id];
+                      return last && (typeof last === 'number' && (now - last) >= STALE_PLAYER_TIMEOUT);
+                  });
+                  console.log(`[game-state] 시간제 비활성 플레이어 정리: ${roomData.players.length}명 → ${activePlayers.length}명`, inactivePlayers.map(p => p.id));
+                  
+                  roomData.players = activePlayers;
+                  // 비활성 플레이어의 scores, playerWords도 제거
+                  inactivePlayers.forEach(p => {
+                      if (roomData.scores) delete roomData.scores[p.id];
+                      if (roomData.playerWords) delete roomData.playerWords[p.id];
+                  });
+                  
+                  // 🚀 비동기로 KV 업데이트 (응답 지연 최소화)
+                  env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
+                      metadata: {
+                          id: roomId,
+                          roomNumber: roomData.roomNumber || 0,
+                          createdAt: roomData.createdAt,
+                          playerCount: activePlayers.length,
+                          gameStarted: roomData.gameStarted || false,
+                          roundNumber: roomData.roundNumber || 0,
+                          title: roomData.title || '초성 배틀방',
+                          gameMode: roomData.gameMode || 'time'
+                      }
+                  }).catch(e => {
+                      console.error('[game-state] 비활성 플레이어 정리 KV 업데이트 실패:', e);
+                  });
+              }
+              finalPlayers = activePlayers;
+          } else {
+              // 게임 중이거나 lastSeen이 없으면 기존 players 사용
               finalPlayers = roomData.players || [];
           }
       }

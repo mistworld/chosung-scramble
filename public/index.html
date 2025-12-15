@@ -5272,11 +5272,38 @@
                 // 방 입장 후 점수 팝업용 상태 초기화
                 multiplayerState.previousWordCounts = {};
 
-                // 🚀 입장 직후 즉시 game-state 가져와서 슬롯 표시
-                const stateResponse = await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${roomId}&playerId=${encodeURIComponent(multiplayerState.playerId || '')}`, {
-                    cache: 'no-cache'
-                });
-                const roomData = await stateResponse.json();
+                // 🚀 입장 직후 즉시 game-state 가져와서 슬롯 표시 (재시도 로직 포함)
+                let roomData = null;
+                let retryCount = 0;
+                while (retryCount < 3 && !roomData) {
+                    try {
+                        const stateResponse = await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${roomId}&playerId=${encodeURIComponent(multiplayerState.playerId || '')}`, {
+                            cache: 'no-cache'
+                        });
+                        if (stateResponse.ok) {
+                            roomData = await stateResponse.json();
+                            // players 배열에 내 playerId가 있는지 확인
+                            if (roomData.players && roomData.players.find(p => p.id === multiplayerState.playerId)) {
+                                break; // 입장 성공
+                            }
+                            // 아직 players에 없으면 잠시 대기 후 재시도
+                            if (retryCount < 2) {
+                                await new Promise(resolve => setTimeout(resolve, 200));
+                            }
+                            roomData = null; // 재시도
+                        }
+                    } catch (e) {
+                        console.error('[입장] game-state 조회 실패:', e);
+                    }
+                    retryCount++;
+                }
+                if (!roomData) {
+                    // 재시도 실패 시 마지막으로 한 번 더 시도
+                    const stateResponse = await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${roomId}&playerId=${encodeURIComponent(multiplayerState.playerId || '')}`, {
+                        cache: 'no-cache'
+                    });
+                    roomData = await stateResponse.json();
+                }
                 
                 // 🚀 입장 직후 즉시 슬롯 표시 (폴링 시작 전에도)
                 multiplayerState.gameMode = roomData.gameMode || 'time';
@@ -7348,7 +7375,8 @@
         checkWord = function() {
             originalCheckWord();
             if (multiplayerState.isMultiplayer) {
-                setTimeout(() => updatePlayerScore(), 100);
+                // 🚀 점수 즉시 반영 (딜레이 제거)
+                updatePlayerScore();
             }
         };
 
