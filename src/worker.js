@@ -454,6 +454,7 @@ export class GameStateRoom {
       if (update.action === 'end_game') {
           state.gameStarted = false;
           state.endTime = now;
+          state.consonants = []; // 🚀 게임 종료 시 초성 초기화 (대기실 상태로 만들기 위해)
           await this.state.storage.setAlarm(now + 60 * 1000);
       }
 
@@ -609,7 +610,8 @@ export class GameStateRoom {
           }
           state.gameStarted = false;
           state.endTime = now;
-          await this.persistState(state);
+          state.consonants = []; // 🚀 게임 종료 시 초성 초기화 (대기실 상태로 만들기 위해)
+          await this.persistState(state, true); // 🚀 KV 동기화 추가
           return;
       }
       
@@ -720,14 +722,19 @@ async function handleRooms(env) {
               const players = Array.isArray(roomData.players) ? roomData.players : [];
               
               let playerCount = players.length;
-              
-              if (roomData.lastSeen && typeof roomData.lastSeen === 'object' && players.length > 0) {
+
+              // 🚀 게임 중이거나 게임 종료 후 대기실 상태면 lastSeen 필터링 안 함 (방 목록에 항상 표시)
+              // 게임 중에는 lastSeen 업데이트가 제대로 안 될 수 있고, 대기실 상태면 입장 가능해야 함
+              if (!roomData.gameStarted && roomData.lastSeen && typeof roomData.lastSeen === 'object' && players.length > 0) {
+                  // 대기실 상태에서만 lastSeen 기반 필터링 (활성 플레이어만 카운트)
                   const activePlayers = players.filter(p => {
                       const last = roomData.lastSeen[p.id];
                       return !last || (typeof last === 'number' && (now - last) < STALE_PLAYER_TIMEOUT);
                   });
                   playerCount = activePlayers.length;
               }
+              // 게임 중이면 players.length 그대로 사용 (lastSeen 필터링 안 함)
+              
               if ((now - createdAt) >= ONE_HOUR) {
                   continue;
               }
@@ -764,18 +771,22 @@ async function handleRooms(env) {
               const players = Array.isArray(roomData.players) ? roomData.players : [];
               
               let playerCount = players.length;
-              
-              if (roomData.lastSeen && typeof roomData.lastSeen === 'object' && players.length > 0) {
+
+              // 🚀 게임 중이거나 게임 종료 후 대기실 상태면 lastSeen 필터링 안 함 (방 목록에 항상 표시)
+              // 게임 중에는 lastSeen 업데이트가 제대로 안 될 수 있고, 대기실 상태면 입장 가능해야 함
+              if (!roomData.gameStarted && roomData.lastSeen && typeof roomData.lastSeen === 'object' && players.length > 0) {
+                  // 대기실 상태에서만 lastSeen 기반 필터링 (활성 플레이어만 카운트)
                   const activePlayers = players.filter(p => {
                       const last = roomData.lastSeen[p.id];
                       return !last || (typeof last === 'number' && (now - last) < STALE_PLAYER_TIMEOUT);
                   });
                   playerCount = activePlayers.length;
               }
-              
+              // 게임 중이면 players.length 그대로 사용 (lastSeen 필터링 안 함)
+
               if ((now - createdAt) >= ONE_HOUR) continue;
               if (playerCount <= 0) continue;
-              
+
               seenIds.add(roomId);
               rooms.push({
                   id: roomId,
