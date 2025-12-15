@@ -1177,8 +1177,9 @@ async function handleLeaveRoom(request, env) {
       console.log(`[leave-room] 방장 승계: ${newHostId}가 새 방장이 됨 (시간제 모드)`);
   }
   
-  // 🆕 슬롯 1명만 남았을 때도 방 삭제 (턴제는 2인 이상 필요)
-  if (roomData.players.length <= 1) {
+  // 🚀 시간제: 최소 1명만 있어도 방 유지 (들락날락 가능)
+  // 🚀 턴제: 1명만 남으면 방 삭제 (2명 이상 필요)
+  if (roomData.gameMode === 'turn' && roomData.players.length <= 1) {
       try {
           await env.ROOM_LIST.delete(roomId);
           try {
@@ -1465,6 +1466,11 @@ async function handleGameState(request, env) {
       
       if (!doState.players || !Array.isArray(doState.players)) {
           doState.players = [];
+      }
+      
+      // 🚀 시간제 모드: lastSeen 정보 포함 (종료 모달에서 비활성 플레이어 필터링용)
+      if (doState.gameMode === 'time' && roomData.lastSeen) {
+          doState.lastSeen = roomData.lastSeen;
       }
       
       // 🆕 시간 동기화: 서버 현재 시간 전송

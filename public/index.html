@@ -6917,8 +6917,20 @@
                     });
                 });
             } else {
-                // 시간제 모드: 기존 로직
-                results = roomData.players
+                // 🚀 시간제 모드: 종료 모달에서 비활성 플레이어 필터링 (브라우저 종료로 나간 플레이어 제외)
+                const now = Date.now();
+                const STALE_PLAYER_TIMEOUT = 15 * 1000; // 15초 (게임 중 비활성 플레이어 감지)
+                const activePlayers = roomData.players.filter(player => {
+                    // lastSeen이 있으면 활성 상태 확인
+                    if (roomData.lastSeen && roomData.lastSeen[player.id]) {
+                        const lastSeen = roomData.lastSeen[player.id];
+                        return (now - lastSeen) < STALE_PLAYER_TIMEOUT;
+                    }
+                    // lastSeen이 없으면 활성으로 간주 (게임 시작 전 입장했을 수 있음)
+                    return true;
+                });
+                
+                results = activePlayers
                     .map(player => ({
                         id: player.id,
                         name: player.name,
