@@ -765,7 +765,7 @@ async function handleRooms(env) {
               }
               const createdAt = roomData.createdAt || now;
               const roomId = roomData.id || key.name;
-               const players = Array.isArray(roomData.players) ? roomData.players : [];
+              const players = Array.isArray(roomData.players) ? roomData.players : [];
               
               // 🚀 players가 비어있으면 무조건 제외 (방 파기된 방)
               if (players.length === 0) {
@@ -784,12 +784,7 @@ async function handleRooms(env) {
                       const last = roomData.lastSeen[p.id];
                       return !last || (typeof last === 'number' && (now - last) < STALE_PLAYER_TIMEOUT);
                   });
-                  // 시간제 모드: 최소 1명만 있어도 방 목록에 표시
-                  if (roomData.gameMode === 'time' && activePlayers.length === 0 && players.length > 0) {
-                      playerCount = players.length; // 전체 players 수 사용 (들락날락 고려)
-                  } else {
-                      playerCount = activePlayers.length;
-                  }
+                  playerCount = activePlayers.length;
               }
               // 게임 중이면 players.length 그대로 사용 (lastSeen 필터링 안 함)
               
@@ -826,7 +821,7 @@ async function handleRooms(env) {
           
           try {
               const createdAt = roomData.createdAt || now;
- const players = Array.isArray(roomData.players) ? roomData.players : [];
+              const players = Array.isArray(roomData.players) ? roomData.players : [];
               
               // 🚀 players가 비어있으면 무조건 제외 (방 파기된 방)
               if (players.length === 0) {
@@ -845,12 +840,7 @@ async function handleRooms(env) {
                       const last = roomData.lastSeen[p.id];
                       return !last || (typeof last === 'number' && (now - last) < STALE_PLAYER_TIMEOUT);
                   });
-                  // 시간제 모드: 최소 1명만 있어도 방 목록에 표시
-                  if (roomData.gameMode === 'time' && activePlayers.length === 0 && players.length > 0) {
-                      playerCount = players.length; // 전체 players 수 사용 (들락날락 고려)
-                  } else {
-                      playerCount = activePlayers.length;
-                  }
+                  playerCount = activePlayers.length;
               }
               // 게임 중이면 players.length 그대로 사용 (lastSeen 필터링 안 함)
 
