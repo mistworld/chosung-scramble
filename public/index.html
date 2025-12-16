@@ -6767,21 +6767,30 @@
             try {
                 const action = isNewRound ? 'new_game' : 'start_game';
                 console.log(`🎯 [방장] ${action} 신호 전송:`, gameState.currentConsonants);
-                
+
                 // 🆕 턴제 모드일 때 players 배열 전송
                 const players = multiplayerState.players || [];
-                
+
+                const requestBody = {
+                    action: action,
+                    consonants: gameState.currentConsonants,
+                    startTime: Date.now(),
+                    timeLeft: 180,
+                    gameMode: multiplayerState.gameMode || 'time', // 🆕 게임 모드 전송
+                    players: players, // 🆕 플레이어 목록 전송
+                    roomId: multiplayerState.roomId // 🚀 roomId 추가 (DO에서 블랙리스트 조회용)
+                };
+
+                // 🚀 시간제 모드에서 new_game 액션일 때 1등 ID 전송
+                if (isNewRound && multiplayerState.gameMode === 'time' && multiplayerState.firstPlaceId) {
+                    requestBody.firstPlaceId = multiplayerState.firstPlaceId;
+                    console.log(`🎯 [방장] 1등 ID 전송: ${multiplayerState.firstPlaceId}`);
+                }
+
                 await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${multiplayerState.roomId}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        action: action, 
-                        consonants: gameState.currentConsonants, 
-                        startTime: Date.now(),
-                        timeLeft: 180,
-                        gameMode: multiplayerState.gameMode || 'time', // 🆕 게임 모드 전송
-                        players: players // 🆕 플레이어 목록 전송
-                    })
+                    body: JSON.stringify(requestBody)
                 });
             } catch (error) {
                 console.error('게임 시작 전송 실패:', error);
@@ -6978,6 +6987,9 @@
                     const newHostId = results[0].id;
                     const wasHost = multiplayerState.isHost;
                     multiplayerState.isHost = (newHostId === multiplayerState.playerId);
+                    
+                    // 🚀 1등 ID 저장 (new_game 액션에서 사용)
+                    multiplayerState.firstPlaceId = newHostId;
                     
                     if (multiplayerState.isHost && !wasHost) {
                         console.log('🎉 1등으로 방장이 되었습니다!');
