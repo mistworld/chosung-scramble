@@ -6786,6 +6786,16 @@
         async function sendGameStart(isNewRound = false) {
             if (!multiplayerState.isMultiplayer || !multiplayerState.roomId) return;
             try {
+                // 🚀 안전장치: 게임 시작 전 서버에서 현재 플레이어 확인 (브라우저 종료한 사람 제거)
+                const currentRoomData = await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${multiplayerState.roomId}`, {
+                    cache: 'no-cache'
+                }).then(r => r.json()).catch(() => null);
+
+                if (currentRoomData && currentRoomData.players) {
+                    multiplayerState.players = currentRoomData.players;
+                    console.log(`🔍 [게임 시작] 현재 접속 중인 플레이어: ${multiplayerState.players.length}명`, multiplayerState.players.map(p => p.name));
+                }
+                
                 const action = isNewRound ? 'new_game' : 'start_game';
                 console.log(`🎯 [방장] ${action} 신호 전송:`, gameState.currentConsonants);
 
