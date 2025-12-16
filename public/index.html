@@ -5274,6 +5274,16 @@
                 // showToast(`${data.roomData.players.length}명의 플레이어가 함께 플레이 중입니다`); // 제거
                 // 방 입장 후 점수 팝업용 상태 초기화
                 multiplayerState.previousWordCounts = {};
+                
+                // 🚀 클라이언트에서 즉시 슬롯 추가 (KV 동기화 지연 보완)
+                multiplayerState.players = data.roomData?.players || [];
+                if (!multiplayerState.players.find(p => p.id === multiplayerState.playerId)) {
+                    multiplayerState.players.push({
+                        id: multiplayerState.playerId,
+                        name: multiplayerState.playerName
+                    });
+                    console.log(`[입장] 클라이언트 슬롯 즉시 추가: ${multiplayerState.playerName}, 총 ${multiplayerState.players.length}명`);
+                }
 
                 // 🚀 입장 직후 즉시 game-state 가져와서 슬롯 표시 (재시도 로직 포함)
                 let roomData = null;
@@ -6752,6 +6762,22 @@
                     body: JSON.stringify({ playerId: multiplayerState.playerId, score: gameState.score, words: words })
                 });
                 multiplayerState.playerWords[multiplayerState.playerId] = words;
+                
+                // 🚀 클라이언트에서 즉시 내 점수 슬롯 반영 (KV 동기화 지연 보완)
+                if (multiplayerState.players && Array.isArray(multiplayerState.players)) {
+                    const myPlayer = multiplayerState.players.find(p => p.id === multiplayerState.playerId);
+                    if (myPlayer) {
+                        myPlayer.score = gameState.score;
+                        // 슬롯 즉시 업데이트 (폴링 기다리지 않고)
+                        const roomData = {
+                            players: multiplayerState.players,
+                            scores: { ...multiplayerState.scores, [multiplayerState.playerId]: gameState.score },
+                            playerWords: multiplayerState.playerWords
+                        };
+                        updatePlayerSlots(roomData);
+                        console.log(`[점수] 클라이언트 슬롯 즉시 반영: ${gameState.score}점`);
+                    }
+                }
             } catch (error) {
                 console.error('점수 업데이트 실패:', error);
             }
