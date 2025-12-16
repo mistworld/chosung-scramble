@@ -7924,11 +7924,15 @@
                             playerId: multiplayerState.playerId
                         })
                     });
+                    
+                    // 🚀 클라이언트에서 즉시 슬롯 제거 (KV 동기화 지연 보완)
+                    multiplayerState.players = multiplayerState.players.filter(p => p.id !== multiplayerState.playerId);
+                    console.log(`[나가기] 클라이언트 슬롯 즉시 제거: ${multiplayerState.playerId}, 남은 인원: ${multiplayerState.players.length}명`);
                 } catch (error) {
                     console.error('방 나가기 전송 실패:', error);
                 }
             }
-            
+
             // 폴링 중지
             stopPolling();
             
