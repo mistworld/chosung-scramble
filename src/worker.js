@@ -1190,40 +1190,26 @@ async function handleLeaveRoom(request, env) {
           if (removeResponse.ok) {
               const removeResult = await removeResponse.json();
               console.log(`[leave-room] 턴제 모드 퇴장: DO에서 ${playerId} 제거 완료`, removeResult?.players?.length || 0, '명 남음');
-          }
-          
-          // 🆕 DO의 방장 승계 결과 확인 및 KV 동기화 (확실하게 반영)
-          // 🚀 약간의 지연을 두어 persistState 완료 보장 (DO는 비동기 처리되므로)
-          await new Promise(resolve => setTimeout(resolve, 200));
-          
-          try {
-              const stateRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
-                  method: 'GET'
-              });
-              const stateResponse = await stub.fetch(stateRequest);
-              if (stateResponse.ok) {
-                  const doState = await stateResponse.json();
-                  // 🆕 DO의 players와 KV의 players 동기화 (제거된 플레이어 반영)
-                  if (doState.players) {
-                      const doPlayerIds = doState.players.map(p => p.id || p);
-                      const kvPlayers = roomData.players.filter(p => doPlayerIds.includes(p.id));
-                      const orderedPlayers = doPlayerIds.map(pid => kvPlayers.find(p => p.id === pid) || doState.players.find(p => (p.id || p) === pid)).filter(Boolean);
-                  // 🚀 DO의 players를 KV에 반영 (항상 동기화하여 일관성 보장)
+              
+              // 🚀 remove_player 응답에서 바로 players 가져오기 (가장 최신 상태)
+              if (removeResult && removeResult.players) {
+                  const doPlayerIds = removeResult.players.map(p => p.id || p);
+                  const kvPlayers = roomData.players.filter(p => doPlayerIds.includes(p.id));
+                  const orderedPlayers = doPlayerIds.map(pid => 
+                      kvPlayers.find(p => p.id === pid) || 
+                      removeResult.players.find(p => (p.id || p) === pid)
+                  ).filter(Boolean);
+                  
+                  // 🚀 DO의 players를 KV에 즉시 반영
                   roomData.players = orderedPlayers;
-                  console.log(`[leave-room] KV players 동기화 완료 (${orderedPlayers.length}명, DO 기준)`, orderedPlayers.map(p => ({ id: p.id, name: p.name })));
-                      
-                      // 방장 승계 확인
-                      if (doState.hostPlayerId && doState.hostPlayerId !== roomData.hostId) {
-                          roomData.hostId = doState.hostPlayerId;
-                          console.log(`[leave-room] KV 방장 승계 동기화: ${doState.hostPlayerId}`);
-                      }
-                  } else {
-                      // DO에 players가 없으면 KV의 필터링된 players 사용 (초기 상태)
-                      console.log(`[leave-room] DO에 players 없음, KV 필터링 결과 사용 (${roomData.players.length}명)`);
+                  console.log(`[leave-room] KV players 즉시 동기화 (${orderedPlayers.length}명, DO 기준)`, orderedPlayers.map(p => ({ id: p.id, name: p.name })));
+                  
+                  // 방장 승계 확인
+                  if (removeResult.hostPlayerId && removeResult.hostPlayerId !== roomData.hostId) {
+                      roomData.hostId = removeResult.hostPlayerId;
+                      console.log(`[leave-room] KV 방장 승계 동기화: ${removeResult.hostPlayerId}`);
                   }
               }
-          } catch (e) {
-              console.error('[leave-room] DO 상태 확인 실패 (무시):', e);
           }
       } catch (e) {
           console.error('[leave-room] DO에서 플레이어 제거 실패 (무시):', e);
