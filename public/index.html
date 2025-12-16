@@ -5252,13 +5252,8 @@
                 });
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({}));
-                    
-                    // 🚀 블랙리스트 에러 처리 (게임 중 이탈자)
-                    if (errorData.error === 'BLACKLISTED') {
-                        showToast('게임 중 이탈로 인해 이 방에 입장할 수 없습니다', 3000);
-                        closeRoomModal();
-                        return;
-                    }
+
+                    // 🚀 블랙리스트 제거됨 (입퇴장 완전 자유)
                     
                     // 🚀 닉네임 중복 에러 처리: 토스트 대신 모달 내부에 메시지 표시
                     if (errorData.error === 'DUPLICATE_NAME' || errorData.message) {
@@ -6968,12 +6963,8 @@
                     });
                 });
             } else {
-                // 🚀 시간제 모드: 블랙리스트 기반 필터링 (게임 중 이탈자 제외)
-                // lastSeen 체크 제거 - 블랙리스트만 사용
-                const blacklist = roomData.blacklist || [];
-                const validPlayers = roomData.players.filter(p => !blacklist.includes(p.id));
-                
-                results = validPlayers
+                // 🚀 시간제 모드: 모든 플레이어 표시 (블랙리스트 제거됨)
+                results = roomData.players
                     .map(player => ({
                         id: player.id,
                         name: player.name,
@@ -6982,7 +6973,7 @@
                     }))
                     .sort((a, b) => b.score - a.score);
                 
-                // 🚀 1등을 새 방장으로 설정 (이탈자 제외한 1등)
+                // 🚀 1등을 새 방장으로 설정
                 if (results.length > 0) {
                     const newHostId = results[0].id;
                     const wasHost = multiplayerState.isHost;

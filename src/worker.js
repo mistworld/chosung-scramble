@@ -256,26 +256,15 @@ export class GameStateRoom {
                   state.turnStartTime = now;
               }
           } else if (update.gameMode === 'time' || state.gameMode === 'time') {
-              // 🚀 시간제 모드: 블랙리스트 플레이어 제거 + 1등을 방장으로 설정
+              // 🚀 시간제 모드: 1등을 방장으로 설정 (블랙리스트 제거됨)
               state.gameMode = 'time';
               
-              // KV에서 블랙리스트 가져오기
-              let blacklist = [];
-              try {
-                  blacklist = await this.env.ROOM_LIST.get(`blacklist_${update.roomId || 'unknown'}`, 'json') || [];
-              } catch (e) {
-                  console.error('[new_game] 블랙리스트 가져오기 실패:', e);
-              }
-              
-              // players 초기화: KV의 players 사용 (블랙리스트 제외)
+              // players 초기화: KV의 players 사용
               if (Array.isArray(update.players) && update.players.length > 0) {
-                  const blacklistSet = new Set(blacklist);
-                  state.players = update.players.filter(p => !blacklistSet.has(p.id));
-                  console.log(`[new_game] 시간제: players 초기화 (블랙리스트 제외) ${update.players.length}명 → ${state.players.length}명`, blacklist);
+                  state.players = update.players;
+                  console.log(`[new_game] 시간제: players 초기화 ${state.players.length}명`);
               } else if (state.players && Array.isArray(state.players) && state.players.length > 0) {
-                  const blacklistSet = new Set(blacklist);
-                  state.players = state.players.filter(p => !blacklistSet.has(p.id));
-                  console.log(`[new_game] 시간제: DO players 사용 (블랙리스트 제외) ${state.players.length}명`, blacklist);
+                  console.log(`[new_game] 시간제: DO players 사용 ${state.players.length}명`);
               } else {
                   state.players = [];
               }
@@ -1014,16 +1003,7 @@ async function handleJoinRoom(request, env) {
       return jsonResponse({ error: 'Room not found' }, 404);
   }
   
-  // 🚀 시간제 모드: 블랙리스트 체크 (게임 중 이탈자는 재입장 불가)
-  if (roomData.gameMode === 'time') {
-      const blacklist = await env.ROOM_LIST.get(`blacklist_${roomId}`, 'json') || [];
-      if (blacklist.includes(playerId)) {
-          return jsonResponse({ 
-              error: 'BLACKLISTED',
-              message: '게임 중 이탈로 인해 이 방에 입장할 수 없습니다' 
-          }, 403);
-      }
-  }
+  // 🚀 시간제 모드: 블랙리스트 제거 (입퇴장 완전 자유)
   // 🚀 재입장은 항상 가능하므로 players.length 체크 제거
   // 새 플레이어만 5명 제한 적용 (재입장은 제외)
   if (!roomData.players.find(p => p.id === playerId) && roomData.players.length >= 5) {
@@ -1248,13 +1228,7 @@ async function handleLeaveRoom(request, env) {
       try {
           await env.ROOM_LIST.delete(roomId);
           
-          // 🚀 블랙리스트도 삭제
-          try {
-              await env.ROOM_LIST.delete(`blacklist_${roomId}`);
-              console.log(`[leave-room] 블랙리스트 삭제: ${roomId}`);
-          } catch (e) {
-              console.error('[leave-room] 블랙리스트 삭제 실패 (무시):', e);
-          }
+          // 🚀 블랙리스트 제거됨 (입퇴장 완전 자유)
           
           try {
               const recentRooms = await env.ROOM_LIST.get('_recent_rooms', 'json') || [];
@@ -1462,115 +1436,10 @@ async function handleGameState(request, env) {
               finalPlayers = roomData.players || [];
           }
       } else {
-          // 🚀 시간제 모드: 게임 중 비활성 플레이어 감지 → 블랙리스트 추가 (슬롯 유지)
-          // 나가기 버튼이 없는 상태 (게임 중)에서만 블랙리스트 추가
-          if (doState.gameStarted && !doState.endTime && roomData.gameMode === 'time' && roomData.players && roomData.players.length > 0 && roomData.lastSeen) {
-              const STALE_PLAYER_TIMEOUT = 15 * 1000; // 15초 (게임 중 비활성 플레이어 감지)
-              const now = Date.now();
-              const inactivePlayers = roomData.players.filter(p => {
-                  const last = roomData.lastSeen[p.id];
-                  return last && (typeof last === 'number' && (now - last) >= STALE_PLAYER_TIMEOUT);
-              });
-              
-              // 게임 중 이탈자 발견 시 블랙리스트에 추가
-              if (inactivePlayers.length > 0) {
-                  console.log(`[game-state] 시간제 게임 중 이탈자 감지: ${inactivePlayers.length}명`, inactivePlayers.map(p => p.id));
-                  
-                  // 블랙리스트 가져오기
-                  const blacklist = await env.ROOM_LIST.get(`blacklist_${roomId}`, 'json') || [];
-                  const newBlacklist = [...new Set([...blacklist, ...inactivePlayers.map(p => p.id)])];
-                  
-                  // 블랙리스트 저장
-                  await env.ROOM_LIST.put(`blacklist_${roomId}`, JSON.stringify(newBlacklist));
-                  
-                  console.log(`[game-state] 블랙리스트 업데이트: ${blacklist.length}명 → ${newBlacklist.length}명`);
-              }
-          }
-          
-          // 🚀 시간제 모드: 종료 모달 시점에 블랙리스트 플레이어를 roomData.players에서 제거
-          // endTime이 설정되면 = 게임 종료 = 종료 모달 = 대기실 상태
-          // 이 시점에 블랙리스트 플레이어를 슬롯에서 제거하여 다음 판에 영향 없도록 함
-          if (doState.endTime && roomData.gameMode === 'time' && roomData.players && roomData.players.length > 0) {
-              const blacklist = await env.ROOM_LIST.get(`blacklist_${roomId}`, 'json') || [];
-              if (blacklist.length > 0) {
-                  const beforeCount = roomData.players.length;
-                  const blacklistSet = new Set(blacklist);
-                  roomData.players = roomData.players.filter(p => !blacklistSet.has(p.id));
-                  
-                  if (roomData.players.length !== beforeCount) {
-                      console.log(`[game-state] 종료 모달: 블랙리스트 플레이어 슬롯 제거 ${beforeCount}명 → ${roomData.players.length}명`, blacklist);
-                      
-                      // 블랙리스트 플레이어의 scores, playerWords도 제거
-                      blacklist.forEach(playerId => {
-                          if (roomData.scores) delete roomData.scores[playerId];
-                          if (roomData.playerWords) delete roomData.playerWords[playerId];
-                      });
-                      
-                      // KV 업데이트 (비동기)
-                      env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
-                          metadata: {
-                              id: roomId,
-                              roomNumber: roomData.roomNumber || 0,
-                              createdAt: roomData.createdAt,
-                              playerCount: roomData.players.length,
-                              gameStarted: roomData.gameStarted || false,
-                              roundNumber: roomData.roundNumber || 0,
-                              title: roomData.title || '초성 배틀방',
-                              gameMode: roomData.gameMode || 'time'
-                          }
-                      }).catch(e => {
-                          console.error('[game-state] 종료 모달 블랙리스트 제거 KV 업데이트 실패:', e);
-                      });
-                  }
-              }
-          }
-          
-          // 🚀 시간제 모드: 대기실에서만 비활성 플레이어 정리 (게임 중, 종료 모달 상태는 제외)
-          // 종료 모달 상태 (!gameStarted && endTime)는 입퇴장 자유이므로 비활성 플레이어 정리 안 함
-          if (!doState.gameStarted && !doState.endTime && roomData.players && roomData.players.length > 0 && roomData.lastSeen) {
-              const STALE_PLAYER_TIMEOUT = 15 * 1000; // 15초 (비활성 플레이어 감지)
-              const now = Date.now();
-              const activePlayers = roomData.players.filter(p => {
-                  const last = roomData.lastSeen[p.id];
-                  return !last || (typeof last === 'number' && (now - last) < STALE_PLAYER_TIMEOUT);
-              });
-              
-              // 비활성 플레이어가 있으면 KV 업데이트
-              if (activePlayers.length !== roomData.players.length) {
-                  const inactivePlayers = roomData.players.filter(p => {
-                      const last = roomData.lastSeen[p.id];
-                      return last && (typeof last === 'number' && (now - last) >= STALE_PLAYER_TIMEOUT);
-                  });
-                  console.log(`[game-state] 시간제 대기실 비활성 플레이어 정리: ${roomData.players.length}명 → ${activePlayers.length}명`, inactivePlayers.map(p => p.id));
-                  
-                  roomData.players = activePlayers;
-                  // 비활성 플레이어의 scores, playerWords도 제거
-                  inactivePlayers.forEach(p => {
-                      if (roomData.scores) delete roomData.scores[p.id];
-                      if (roomData.playerWords) delete roomData.playerWords[p.id];
-                  });
-                  
-                  // 🚀 비동기로 KV 업데이트 (응답 지연 최소화)
-                  env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
-                      metadata: {
-                          id: roomId,
-                          roomNumber: roomData.roomNumber || 0,
-                          createdAt: roomData.createdAt,
-                          playerCount: activePlayers.length,
-                          gameStarted: roomData.gameStarted || false,
-                          roundNumber: roomData.roundNumber || 0,
-                          title: roomData.title || '초성 배틀방',
-                          gameMode: roomData.gameMode || 'time'
-                      }
-                  }).catch(e => {
-                      console.error('[game-state] 비활성 플레이어 정리 KV 업데이트 실패:', e);
-                  });
-              }
-              finalPlayers = activePlayers;
-          } else {
-              // 게임 중이거나 lastSeen이 없으면 기존 players 사용
-              finalPlayers = roomData.players || [];
-          }
+          // 🚀 시간제 모드: 비활성 플레이어 정리 제거 (입퇴장 완전 자유)
+          // 게임 중, 대기실, 종료 모달 모두 입퇴장 자유
+          // 이탈자는 다음 판 시작할 때 자동 정리됨
+          finalPlayers = roomData.players || [];
       }
       // 시간제 모드: KV의 players 사용 (DO는 게임 상태만 관리)
       
@@ -1657,11 +1526,7 @@ async function handleGameState(request, env) {
           doState.lastSeen = roomData.lastSeen;
       }
       
-      // 🚀 시간제 모드: 블랙리스트 포함 (게임 중 이탈자 정보)
-      if (doState.gameMode === 'time') {
-          const blacklist = await env.ROOM_LIST.get(`blacklist_${roomId}`, 'json') || [];
-          doState.blacklist = blacklist;
-      }
+      // 🚀 시간제 모드: 블랙리스트 제거됨 (입퇴장 완전 자유)
       
       // 🆕 시간 동기화: 서버 현재 시간 전송
       doState.serverNow = now;
@@ -1714,16 +1579,8 @@ async function handleGameState(request, env) {
                   roomData.scores = {};
                   roomData.playerWords = {};
                   
-                  // 🚀 시간제 모드: 블랙리스트 플레이어 제거 + 1등 방장 설정
+                  // 🚀 시간제 모드: 1등을 방장으로 설정 (블랙리스트 제거됨)
                   if (roomData.gameMode === 'time') {
-                      const blacklist = await env.ROOM_LIST.get(`blacklist_${roomId}`, 'json') || [];
-                      if (blacklist.length > 0 && roomData.players && roomData.players.length > 0) {
-                          const beforeCount = roomData.players.length;
-                          const blacklistSet = new Set(blacklist);
-                          roomData.players = roomData.players.filter(p => !blacklistSet.has(p.id));
-                          console.log(`[new_game] KV: 블랙리스트 플레이어 제거 ${beforeCount}명 → ${roomData.players.length}명`, blacklist);
-                      }
-                      
                       // 🚀 1등을 방장으로 설정 (players 배열 첫 번째로 이동)
                       if (updateBody.firstPlaceId && roomData.players && roomData.players.length > 0) {
                           const firstPlaceIndex = roomData.players.findIndex(p => p.id === updateBody.firstPlaceId);
