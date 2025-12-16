@@ -312,13 +312,8 @@ export class GameStateRoom {
               if (!state.playerLives[playerId]) state.playerLives[playerId] = 0;
               state.playerLives[playerId] += livesEarned;
               
-              // 🚀 정답 입력 시 연속 타임아웃 카운트 초기화
-              if (state.consecutiveTimeouts && state.consecutiveTimeouts[playerId]) {
-                  delete state.consecutiveTimeouts[playerId];
-              }
-
               console.log(`[턴제] ${playerId}가 "${word}" 맞춤. 연장권 +${livesEarned}, 현재: ${state.playerLives[playerId]}`);
-
+              
               await this.nextTurn(state, now, state.players || []);
           }
       }
@@ -326,51 +321,11 @@ export class GameStateRoom {
       if (update.action === 'turn_timeout' && state.gameMode === 'turn') {
           const { playerId } = update;
           if (playerId === state.currentTurnPlayerId) {
-              // 🚀 연속 타임아웃 카운트 (브라우저 종료 감지용)
-              if (!state.consecutiveTimeouts) state.consecutiveTimeouts = {};
-              state.consecutiveTimeouts[playerId] = (state.consecutiveTimeouts[playerId] || 0) + 1;
-              
-              // 🚀 3번 연속 타임아웃 → 브라우저 종료로 간주, 강제 제거
-              if (state.consecutiveTimeouts[playerId] >= 3) {
-                  console.log(`[턴제] ${playerId} 연속 3번 타임아웃 - 브라우저 종료로 간주, 강제 제거`);
-                  
-                  // force_eliminate와 동일한 처리
-                  state.players = state.players.filter(p => (p.id || p) !== playerId);
-                  if (state.eliminatedPlayers && !state.eliminatedPlayers.includes(playerId)) {
-                      state.eliminatedPlayers.push(playerId);
-                  }
-                  if (state.playerLives && state.playerLives[playerId] !== undefined) {
-                      delete state.playerLives[playerId];
-                  }
-                  if (state.turnCount && state.turnCount[playerId] !== undefined) {
-                      delete state.turnCount[playerId];
-                  }
-                  delete state.consecutiveTimeouts[playerId];
-                  
-                  // 게임 종료 조건 체크
-                  const gameParticipants = (state.players || []).filter(p => {
-                      const pid = p.id || p;
-                      return state.playerLives?.[pid] !== undefined && !state.eliminatedPlayers.includes(pid);
-                  });
-                  
-                  if (gameParticipants.length <= 1) {
-                      state.gameStarted = false;
-                      state.endTime = now;
-                      state.consonants = [];
-                      await this.persistState(state, true);
-                      return state;
-                  }
-                  
-                  await this.nextTurn(state, now, state.players || []);
-                  await this.persistState(state, true);
-                  return state;
-              }
-              
               if (!state.playerLives[playerId]) state.playerLives[playerId] = 0;
               state.playerLives[playerId] -= 1;
-
-              console.log(`[턴제] ${playerId} 시간 초과 (${state.consecutiveTimeouts[playerId]}/3). 연장권 -1, 현재: ${state.playerLives[playerId]}`);
-
+              
+              console.log(`[턴제] ${playerId} 시간 초과. 연장권 -1, 현재: ${state.playerLives[playerId]}`);
+              
               if (state.playerLives[playerId] < 0) {
                   if (!state.eliminatedPlayers.includes(playerId)) {
                       state.eliminatedPlayers.push(playerId);
