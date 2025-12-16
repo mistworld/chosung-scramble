@@ -991,7 +991,12 @@ async function handleJoinRoom(request, env) {
   if (!roomData) {
       return jsonResponse({ error: 'Room not found' }, 404);
   }
-  
+
+  // 🚀 파기된 방 체크 (players가 비어있으면 입장 불가)
+  if (!roomData.players || roomData.players.length === 0) {
+      return jsonResponse({ error: 'Room is closed', message: '방이 삭제되었습니다' }, 404);
+  }
+
   // 🚀 시간제 모드: 블랙리스트 제거 (입퇴장 완전 자유)
   // 🚀 재입장은 항상 가능하므로 players.length 체크 제거
   // 새 플레이어만 5명 제한 적용 (재입장은 제외)
