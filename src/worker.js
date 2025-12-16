@@ -36,6 +36,33 @@ export class GameStateRoom {
           if (!snapshot) {
               return this.json({ error: 'Room not found' }, 404);
           }
+          
+          // 🚀 턴제 자동 타임아웃 체크 (브라우저 종료한 사람 대응)
+          if (snapshot.gameMode === 'turn' && snapshot.gameStarted && snapshot.currentTurnPlayerId && snapshot.turnStartTime) {
+              const now = Date.now();
+              const elapsed = (now - snapshot.turnStartTime) / 1000;
+              const isFirstTurn = snapshot.isFirstTurn === true;
+              const turnTimeLimit = isFirstTurn ? 10 : 6;
+              
+              // 타임아웃 시간 지났는데 턴이 안 넘어갔으면 → 서버에서 자동 타임아웃 처리
+              if (elapsed >= turnTimeLimit + 1) {
+                  console.log(`🚨 [턴제 DO] 서버 자동 타임아웃 감지: ${snapshot.currentTurnPlayerId}, 경과=${elapsed.toFixed(1)}초`);
+                  
+                  // turn_timeout 처리
+                  const timeoutUpdate = {
+                      action: 'turn_timeout',
+                      playerId: snapshot.currentTurnPlayerId
+                  };
+                  
+                  // applyUpdate 호출하여 타임아웃 처리
+                  const updated = await this.state.blockConcurrencyWhile(() =>
+                      this.applyUpdate(roomId, timeoutUpdate)
+                  );
+                  
+                  return this.json(updated);
+              }
+          }
+          
           return this.json(snapshot);
       }
 
