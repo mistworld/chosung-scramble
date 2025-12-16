@@ -6901,11 +6901,22 @@
             }, 3000);
         }
         
-        function showFinalResults(roomData) {
+        async function showFinalResults(roomData) {
             // 🆕 이미 모달이 있으면 중복 실행 방지!
             if (document.querySelector('.mp-result-modal')) {
                 console.log('⚠️ 이미 결과 모달 존재 - 중복 방지');
                 return;
+            }
+            
+            // 🚀 종료 모달 뜨기 전 현재 접속 중인 플레이어 확인 (브라우저 종료한 사람 제거)
+            const currentRoomData = await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${multiplayerState.roomId}`, {
+                cache: 'no-cache'
+            }).then(r => r.json()).catch(() => null);
+            
+            if (currentRoomData && currentRoomData.players) {
+                roomData.players = currentRoomData.players;
+                multiplayerState.players = currentRoomData.players;
+                console.log(`🔍 [종료 모달] 현재 접속 중인 플레이어: ${currentRoomData.players.length}명`, currentRoomData.players.map(p => p.name));
             }
             
             // 🆕 턴제 모드와 시간제 모드 분리
