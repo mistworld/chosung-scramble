@@ -6776,11 +6776,7 @@
                     roomId: multiplayerState.roomId // 🚀 roomId 추가 (DO에서 블랙리스트 조회용)
                 };
 
-                // 🚀 시간제 모드에서 new_game 액션일 때 1등 ID 전송
-                if (isNewRound && multiplayerState.gameMode === 'time' && multiplayerState.firstPlaceId) {
-                    requestBody.firstPlaceId = multiplayerState.firstPlaceId;
-                    console.log(`🎯 [방장] 1등 ID 전송: ${multiplayerState.firstPlaceId}`);
-                }
+                // 🚀 방장은 players[0] (첫 입장자, 1등이 방장 되는 거 아님!)
 
                 await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${multiplayerState.roomId}`, {
                     method: 'POST',
@@ -6973,18 +6969,11 @@
                     }))
                     .sort((a, b) => b.score - a.score);
                 
-                // 🚀 1등을 새 방장으로 설정
-                if (results.length > 0) {
-                    const newHostId = results[0].id;
-                    const wasHost = multiplayerState.isHost;
-                    multiplayerState.isHost = (newHostId === multiplayerState.playerId);
-                    
-                    // 🚀 1등 ID 저장 (new_game 액션에서 사용)
-                    multiplayerState.firstPlaceId = newHostId;
-                    
-                    if (multiplayerState.isHost && !wasHost) {
-                        console.log('🎉 1등으로 방장이 되었습니다!');
-                    }
+                // 🚀 방장은 roomData.hostId 또는 players[0] 기준 (1등이 방장 되는 거 아님!)
+                if (roomData.hostId) {
+                    multiplayerState.isHost = (roomData.hostId === multiplayerState.playerId);
+                } else if (roomData.players.length > 0) {
+                    multiplayerState.isHost = (roomData.players[0].id === multiplayerState.playerId);
                 }
             }
                 

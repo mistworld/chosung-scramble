@@ -256,7 +256,7 @@ export class GameStateRoom {
                   state.turnStartTime = now;
               }
           } else if (update.gameMode === 'time' || state.gameMode === 'time') {
-              // 🚀 시간제 모드: 1등을 방장으로 설정 (블랙리스트 제거됨)
+              // 🚀 시간제 모드: 방장은 players[0] (첫 입장자)
               state.gameMode = 'time';
               
               // players 초기화: KV의 players 사용
@@ -267,17 +267,6 @@ export class GameStateRoom {
                   console.log(`[new_game] 시간제: DO players 사용 ${state.players.length}명`);
               } else {
                   state.players = [];
-              }
-              
-              // 🚀 1등을 방장으로 설정 (players 배열 첫 번째로 이동)
-              // update.firstPlaceId는 클라이언트에서 전달 (종료 모달의 1등 ID)
-              if (update.firstPlaceId && state.players.length > 0) {
-                  const firstPlaceIndex = state.players.findIndex(p => p.id === update.firstPlaceId);
-                  if (firstPlaceIndex > 0) {
-                      const firstPlacePlayer = state.players.splice(firstPlaceIndex, 1)[0];
-                      state.players.unshift(firstPlacePlayer);
-                      console.log(`[new_game] 시간제: 1등 ${update.firstPlaceId}를 방장으로 설정 (players[0])`);
-                  }
               }
           }
           
@@ -1579,19 +1568,7 @@ async function handleGameState(request, env) {
                   roomData.scores = {};
                   roomData.playerWords = {};
                   
-                  // 🚀 시간제 모드: 1등을 방장으로 설정 (블랙리스트 제거됨)
-                  if (roomData.gameMode === 'time') {
-                      // 🚀 1등을 방장으로 설정 (players 배열 첫 번째로 이동)
-                      if (updateBody.firstPlaceId && roomData.players && roomData.players.length > 0) {
-                          const firstPlaceIndex = roomData.players.findIndex(p => p.id === updateBody.firstPlaceId);
-                          if (firstPlaceIndex > 0) {
-                              const firstPlacePlayer = roomData.players.splice(firstPlaceIndex, 1)[0];
-                              roomData.players.unshift(firstPlacePlayer);
-                              roomData.hostId = updateBody.firstPlaceId;
-                              console.log(`[new_game] KV: 1등 ${updateBody.firstPlaceId}를 방장으로 설정`);
-                          }
-                      }
-                  }
+                  // 🚀 시간제 모드: 방장은 players[0] (첫 입장자, 1등이 방장 되는 거 아님!)
               } else if (updateBody.action === 'start_game') {
                   roomData.gameStarted = true;
                   roomData.roundNumber = (roomData.roundNumber || 0) + 1;
