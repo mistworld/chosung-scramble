@@ -5252,6 +5252,14 @@
                 });
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({}));
+                    
+                    // 🚀 블랙리스트 에러 처리 (게임 중 이탈자)
+                    if (errorData.error === 'BLACKLISTED') {
+                        showToast('게임 중 이탈로 인해 이 방에 입장할 수 없습니다', 3000);
+                        closeRoomModal();
+                        return;
+                    }
+                    
                     // 🚀 닉네임 중복 에러 처리: 토스트 대신 모달 내부에 메시지 표시
                     if (errorData.error === 'DUPLICATE_NAME' || errorData.message) {
                         // 모달이 이미 열려있으면 메시지만 업데이트, 아니면 모달 열기
@@ -5552,6 +5560,13 @@
             // 멀티플레이 중이면 새게임 버튼 숨기기
             const resetBtn = document.querySelector('.reset-btn');
             if (resetBtn) resetBtn.style.display = 'none';
+            
+            // 🚀 시간제 게임 중: 나가기 버튼 숨김 (비매너 방지)
+            const mpLeaveBtn = document.getElementById('mpLeaveBtn');
+            if (mpLeaveBtn && multiplayerState.gameMode === 'time') {
+                mpLeaveBtn.classList.add('hidden');
+                console.log('[게임 참여] 시간제 모드 - 나가기 버튼 숨김');
+            }
 
             // UI 업데이트
             document.getElementById('score').textContent = '0';
@@ -6944,20 +6959,12 @@
                     });
                 });
             } else {
-                // 🚀 시간제 모드: 종료 모달에서 비활성 플레이어 필터링 (브라우저 종료로 나간 플레이어 제외)
-                const now = Date.now();
-                const STALE_PLAYER_TIMEOUT = 15 * 1000; // 15초 (게임 중 비활성 플레이어 감지)
-                const activePlayers = roomData.players.filter(player => {
-                    // lastSeen이 있으면 활성 상태 확인
-                    if (roomData.lastSeen && roomData.lastSeen[player.id]) {
-                        const lastSeen = roomData.lastSeen[player.id];
-                        return (now - lastSeen) < STALE_PLAYER_TIMEOUT;
-                    }
-                    // lastSeen이 없으면 활성으로 간주 (게임 시작 전 입장했을 수 있음)
-                    return true;
-                });
+                // 🚀 시간제 모드: 블랙리스트 기반 필터링 (게임 중 이탈자 제외)
+                // lastSeen 체크 제거 - 블랙리스트만 사용
+                const blacklist = roomData.blacklist || [];
+                const validPlayers = roomData.players.filter(p => !blacklist.includes(p.id));
                 
-                results = activePlayers
+                results = validPlayers
                     .map(player => ({
                         id: player.id,
                         name: player.name,
@@ -6965,6 +6972,17 @@
                         words: roomData.playerWords?.[player.id] || []
                     }))
                     .sort((a, b) => b.score - a.score);
+                
+                // 🚀 1등을 새 방장으로 설정 (이탈자 제외한 1등)
+                if (results.length > 0) {
+                    const newHostId = results[0].id;
+                    const wasHost = multiplayerState.isHost;
+                    multiplayerState.isHost = (newHostId === multiplayerState.playerId);
+                    
+                    if (multiplayerState.isHost && !wasHost) {
+                        console.log('🎉 1등으로 방장이 되었습니다!');
+                    }
+                }
             }
                 
             const modal = document.createElement('div');
@@ -7120,6 +7138,13 @@
             
             // 오른쪽 채팅창은 계속 보이도록 유지
             document.getElementById('chatContainer').classList.remove('hidden');
+            
+            // 🚀 게임 종료 시 나가기 버튼 다시 표시
+            const mpLeaveBtn = document.getElementById('mpLeaveBtn');
+            if (mpLeaveBtn) {
+                mpLeaveBtn.classList.remove('hidden');
+                console.log('[종료 모달] 나가기 버튼 표시');
+            }
             
             // 모달 채팅 입력창 포커스
             setTimeout(() => {

@@ -978,6 +978,17 @@ async function handleJoinRoom(request, env) {
   if (!roomData) {
       return jsonResponse({ error: 'Room not found' }, 404);
   }
+  
+  // 🚀 시간제 모드: 블랙리스트 체크 (게임 중 이탈자는 재입장 불가)
+  if (roomData.gameMode === 'time') {
+      const blacklist = await env.ROOM_LIST.get(`blacklist_${roomId}`, 'json') || [];
+      if (blacklist.includes(playerId)) {
+          return jsonResponse({ 
+              error: 'BLACKLISTED',
+              message: '게임 중 이탈로 인해 이 방에 입장할 수 없습니다' 
+          }, 403);
+      }
+  }
   // 🚀 재입장은 항상 가능하므로 players.length 체크 제거
   // 새 플레이어만 5명 제한 적용 (재입장은 제외)
   if (!roomData.players.find(p => p.id === playerId) && roomData.players.length >= 5) {
@@ -1192,10 +1203,24 @@ async function handleLeaveRoom(request, env) {
   }
   
   // 🚀 시간제: 최소 1명만 있어도 방 유지 (들락날락 가능)
-  // 🚀 턴제: 1명만 남으면 방 삭제 (2명 이상 필요)
-  if (roomData.gameMode === 'turn' && roomData.players.length <= 1) {
+  // 🚀 방 삭제 조건
+  // 시간제: 모든 플레이어가 나가면 방 삭제
+  // 턴제: 1명만 남으면 방 삭제 (2명 이상 필요)
+  const shouldDeleteRoom = (roomData.gameMode === 'turn' && roomData.players.length <= 1) || 
+                          (roomData.gameMode === 'time' && roomData.players.length === 0);
+  
+  if (shouldDeleteRoom) {
       try {
           await env.ROOM_LIST.delete(roomId);
+          
+          // 🚀 블랙리스트도 삭제
+          try {
+              await env.ROOM_LIST.delete(`blacklist_${roomId}`);
+              console.log(`[leave-room] 블랙리스트 삭제: ${roomId}`);
+          } catch (e) {
+              console.error('[leave-room] 블랙리스트 삭제 실패 (무시):', e);
+          }
+          
           try {
               const recentRooms = await env.ROOM_LIST.get('_recent_rooms', 'json') || [];
               const filtered = recentRooms.filter(r => r.roomId !== roomId);
@@ -1402,8 +1427,33 @@ async function handleGameState(request, env) {
               finalPlayers = roomData.players || [];
           }
       } else {
-          // 🚀 시간제 모드: 게임 중이 아닐 때 비활성 플레이어 정리 (폴링 시 지속적으로)
-          if (!doState.gameStarted && roomData.players && roomData.players.length > 0 && roomData.lastSeen) {
+          // 🚀 시간제 모드: 게임 중 비활성 플레이어 감지 → 블랙리스트 추가 (슬롯 유지)
+          if (doState.gameStarted && !doState.endTime && roomData.gameMode === 'time' && roomData.players && roomData.players.length > 0 && roomData.lastSeen) {
+              const STALE_PLAYER_TIMEOUT = 15 * 1000; // 15초 (게임 중 비활성 플레이어 감지)
+              const now = Date.now();
+              const inactivePlayers = roomData.players.filter(p => {
+                  const last = roomData.lastSeen[p.id];
+                  return last && (typeof last === 'number' && (now - last) >= STALE_PLAYER_TIMEOUT);
+              });
+              
+              // 게임 중 이탈자 발견 시 블랙리스트에 추가
+              if (inactivePlayers.length > 0) {
+                  console.log(`[game-state] 시간제 게임 중 이탈자 감지: ${inactivePlayers.length}명`, inactivePlayers.map(p => p.id));
+                  
+                  // 블랙리스트 가져오기
+                  const blacklist = await env.ROOM_LIST.get(`blacklist_${roomId}`, 'json') || [];
+                  const newBlacklist = [...new Set([...blacklist, ...inactivePlayers.map(p => p.id)])];
+                  
+                  // 블랙리스트 저장
+                  await env.ROOM_LIST.put(`blacklist_${roomId}`, JSON.stringify(newBlacklist));
+                  
+                  console.log(`[game-state] 블랙리스트 업데이트: ${blacklist.length}명 → ${newBlacklist.length}명`);
+              }
+          }
+          
+          // 🚀 시간제 모드: 대기실에서만 비활성 플레이어 정리 (게임 중, 종료 모달 상태는 제외)
+          // 종료 모달 상태 (!gameStarted && endTime)는 입퇴장 자유이므로 비활성 플레이어 정리 안 함
+          if (!doState.gameStarted && !doState.endTime && roomData.players && roomData.players.length > 0 && roomData.lastSeen) {
               const STALE_PLAYER_TIMEOUT = 15 * 1000; // 15초 (비활성 플레이어 감지)
               const now = Date.now();
               const activePlayers = roomData.players.filter(p => {
@@ -1417,7 +1467,7 @@ async function handleGameState(request, env) {
                       const last = roomData.lastSeen[p.id];
                       return last && (typeof last === 'number' && (now - last) >= STALE_PLAYER_TIMEOUT);
                   });
-                  console.log(`[game-state] 시간제 비활성 플레이어 정리: ${roomData.players.length}명 → ${activePlayers.length}명`, inactivePlayers.map(p => p.id));
+                  console.log(`[game-state] 시간제 대기실 비활성 플레이어 정리: ${roomData.players.length}명 → ${activePlayers.length}명`, inactivePlayers.map(p => p.id));
                   
                   roomData.players = activePlayers;
                   // 비활성 플레이어의 scores, playerWords도 제거
@@ -1531,6 +1581,12 @@ async function handleGameState(request, env) {
       // 🚀 시간제 모드: lastSeen 정보 포함 (종료 모달에서 비활성 플레이어 필터링용)
       if (doState.gameMode === 'time' && roomData.lastSeen) {
           doState.lastSeen = roomData.lastSeen;
+      }
+      
+      // 🚀 시간제 모드: 블랙리스트 포함 (게임 중 이탈자 정보)
+      if (doState.gameMode === 'time') {
+          const blacklist = await env.ROOM_LIST.get(`blacklist_${roomId}`, 'json') || [];
+          doState.blacklist = blacklist;
       }
       
       // 🆕 시간 동기화: 서버 현재 시간 전송
