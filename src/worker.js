@@ -1167,7 +1167,7 @@ async function handleLeaveRoom(request, env) {
           
           // 🆕 DO의 방장 승계 결과 확인 및 KV 동기화 (확실하게 반영)
           // 🚀 약간의 지연을 두어 persistState 완료 보장 (DO는 비동기 처리되므로)
-          await new Promise(resolve => setTimeout(resolve, 50));
+          await new Promise(resolve => setTimeout(resolve, 200));
           
           try {
               const stateRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
