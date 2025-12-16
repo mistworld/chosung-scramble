@@ -7255,30 +7255,42 @@
             }
             
             isRestarting = true; // 재시작 시작
-            
+
             try {
+                // 🚀 게임 시작 전 현재 접속 중인 플레이어만 필터링 (브라우저 종료한 사람 제거)
+                // multiplayerState.players를 현재 접속 중인 플레이어로 업데이트
+                const currentRoomData = await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${multiplayerState.roomId}`, {
+                    cache: 'no-cache'
+                }).then(r => r.json()).catch(() => null);
+                
+                if (currentRoomData && currentRoomData.players) {
+                    // 서버의 players를 클라이언트에 반영 (브라우저 종료한 사람은 서버에서 이미 제거됨)
+                    multiplayerState.players = currentRoomData.players;
+                    console.log(`[재시작] 현재 접속 중인 플레이어: ${multiplayerState.players.length}명`, multiplayerState.players.map(p => p.name));
+                }
+                
                 document.querySelector('.mp-result-modal')?.remove();
-                
+
                 // showToast('새로운 게임을 시작합니다...'); // 제거
-                
+
                 // 🆕 게임 화면 먼저 표시 (시작 화면에서 게임 화면으로)
                 document.getElementById('gameStartSection').classList.add('hidden');
                 document.getElementById('gameScreen').classList.remove('hidden');
-                
+
                 // 슬롯 + 채팅 다시 표시 (두 번째 판부터 안 보이던 버그 수정!)
                 document.getElementById('playerSlotsLeft').classList.remove('hidden');
                 document.getElementById('chatContainer').classList.remove('hidden');
-                
+
                 // 🆕 이전 라운드의 UI 잔상 초기화
                 gameState.wordDefinitions = {};
                 if (!gameState.isMobile) {
                     updateEmoji('🤔', '단어를 입력해주세요', 0);
                     updateDefinition('단어를 입력하면 뜻이 표시됩니다');
                 }
-                
+
                 // 폴링 재시작 (다른 플레이어도 게임 시작 감지하도록)
                 startPolling();
-                
+
                 // 게임 시작 (서버에 new_game 신호 전송)
                 // 🆕 멀티플레이어에서는 sendGameStart 사용
                 gameState.currentConsonants = getRandomConsonants();
@@ -7374,18 +7386,21 @@
         const originalEndGame = endGame;
         endGame = function() {
             console.log('endGame 호출됨! 멀티:', multiplayerState.isMultiplayer);
-            
+
             // 멀티플레이 중이면
             if (multiplayerState.isMultiplayer) {
+                // 🚀 게임 종료 시 마지막 점수 업데이트 (마지막 단어 반영)
+                updatePlayerScore();
+                
                 // 게임 상태만 정리 (화면은 안 바꿈)
                 clearInterval(gameState.gameTimer);
                 gameState.gameRunning = false;
                 document.body.classList.remove('time-warning');
                 stopTickSound();
                 stopBGM();  // 🆕 BGM 중지
-                
+
                 console.log('방장인가?', multiplayerState.isHost);
-                
+
                 // 방장만 게임 종료 신호 전송
                 if (multiplayerState.isHost) {
                     console.log('게임 종료 신호 전송!');
