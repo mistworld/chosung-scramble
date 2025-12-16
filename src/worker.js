@@ -765,7 +765,12 @@ async function handleRooms(env) {
               }
               const createdAt = roomData.createdAt || now;
               const roomId = roomData.id || key.name;
-              const players = Array.isArray(roomData.players) ? roomData.players : [];
+               const players = Array.isArray(roomData.players) ? roomData.players : [];
+              
+              // 🚀 players가 비어있으면 무조건 제외 (방 파기된 방)
+              if (players.length === 0) {
+                  continue;
+              }
               
               let playerCount = players.length;
 
@@ -821,7 +826,12 @@ async function handleRooms(env) {
           
           try {
               const createdAt = roomData.createdAt || now;
-              const players = Array.isArray(roomData.players) ? roomData.players : [];
+ const players = Array.isArray(roomData.players) ? roomData.players : [];
+              
+              // 🚀 players가 비어있으면 무조건 제외 (방 파기된 방)
+              if (players.length === 0) {
+                  continue;
+              }
               
               let playerCount = players.length;
 
