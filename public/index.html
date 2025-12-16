@@ -7488,19 +7488,10 @@
         // 🆕 브라우저 창 닫기 감지 - leave-room API 자동 호출
         window.addEventListener('beforeunload', () => {
             if (multiplayerState.isMultiplayer && multiplayerState.roomId && multiplayerState.playerId) {
+                // 🚀 턴제 게임 중 브라우저 종료: 슬롯 유지, 턴 타임아웃으로 생명권 소진
+                // force_eliminate 제거 (감지 불안정)
                 
-                // 🆕 게임 중이면 탈락 처리도 함께
-                if (gameState.gameRunning && multiplayerState.gameMode === 'turn') {
-                    navigator.sendBeacon(
-                        `https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${multiplayerState.roomId}`,
-                        JSON.stringify({
-                            action: 'force_eliminate',
-                            playerId: multiplayerState.playerId
-                        })
-                    );
-                }
-                
-                // 방 나가기
+                // 방 나가기 (대기실/종료 모달에서만 즉시 제거)
                 navigator.sendBeacon(
                     'https://steep-moon-7816.sucksuck1114.workers.dev/api/leave-room',
                     JSON.stringify({
