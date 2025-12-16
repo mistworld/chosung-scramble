@@ -6223,6 +6223,35 @@
                             startTurnModeTimer(roomData);
                         }
                         
+                        // 🚀 타임아웃 자동 감지 (브라우저 종료한 사람 대응)
+                        // 현재 턴 플레이어가 슬롯에 없으면 (브라우저 종료) → 자동 타임아웃
+                        if (roomData.currentTurnPlayerId && roomData.turnStartTime) {
+                            const currentTurnPlayer = roomData.players?.find(p => p.id === roomData.currentTurnPlayerId);
+                            const elapsed = (Date.now() - roomData.turnStartTime) / 1000;
+                            const isFirstTurn = roomData.isFirstTurn === true;
+                            const turnTimeLimit = isFirstTurn ? 10 : 6;
+                            
+                            // 타임아웃 시간 지났는데 턴이 안 넘어갔으면 → 강제 타임아웃
+                            if (elapsed >= turnTimeLimit + 1 && !multiplayerState.turnTimeoutSent) {
+                                multiplayerState.turnTimeoutSent = true;
+                                console.log(`🚨 [턴제] 자동 타임아웃 감지: ${roomData.currentTurnPlayerId}, 경과=${elapsed.toFixed(1)}초`);
+                                
+                                fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${multiplayerState.roomId}`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        action: 'turn_timeout',
+                                        playerId: roomData.currentTurnPlayerId
+                                    })
+                                }).catch(err => console.error('자동 타임아웃 전송 실패:', err));
+                            }
+                        }
+                        
+                        // 턴이 바뀌면 타임아웃 플래그 리셋
+                        if (currentTurnChanged) {
+                            multiplayerState.turnTimeoutSent = false;
+                        }
+                        
                         // 사용된 단어 영역 업데이트
                         if (roomData.usedWords) {
                             multiplayerState.usedWords = roomData.usedWords; // 클라이언트에서 중복 체크용
