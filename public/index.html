@@ -7936,9 +7936,16 @@
         
         // 방 나가기 - 최초 화면으로 완전히 돌아가기
         async function leaveRoom() {
+            // 🚀 폴링 먼저 중지 (슬롯 덮어쓰기 방지)
+            stopPolling();
+            
             // 🆕 서버에 나가기 신호 전송
             if (multiplayerState.roomId && multiplayerState.playerId) {
                 try {
+                    // 🚀 클라이언트에서 즉시 슬롯 제거 (폴링 중지 후)
+                    multiplayerState.players = multiplayerState.players.filter(p => p.id !== multiplayerState.playerId);
+                    console.log(`[나가기] 클라이언트 슬롯 즉시 제거: ${multiplayerState.playerId}, 남은 인원: ${multiplayerState.players.length}명`);
+                    
                     // 🆕 나간 방 정보 저장 (5분간 재입장 불가)
                     const roomData = await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${multiplayerState.roomId}`).then(r => r.json()).catch(() => null);
                     if (roomData) {
@@ -7948,14 +7955,14 @@
                             leftTime: Date.now()
                         };
                         localStorage.setItem(`leftRoom_${multiplayerState.roomId}`, JSON.stringify(leftRoomInfo));
-                        
+
                         // 🆕 탈락자 재입장을 위한 playerId 저장
                         const isEliminated = roomData.eliminatedPlayers?.includes(multiplayerState.playerId) || false;
                         if (isEliminated) {
                             localStorage.setItem(`lastPlayerId_${multiplayerState.roomId}`, multiplayerState.playerId);
                         }
                     }
-                    
+
                     await fetch('https://steep-moon-7816.sucksuck1114.workers.dev/api/leave-room', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -7964,17 +7971,10 @@
                             playerId: multiplayerState.playerId
                         })
                     });
-                    
-                    // 🚀 클라이언트에서 즉시 슬롯 제거 (KV 동기화 지연 보완)
-                    multiplayerState.players = multiplayerState.players.filter(p => p.id !== multiplayerState.playerId);
-                    console.log(`[나가기] 클라이언트 슬롯 즉시 제거: ${multiplayerState.playerId}, 남은 인원: ${multiplayerState.players.length}명`);
                 } catch (error) {
                     console.error('방 나가기 전송 실패:', error);
                 }
             }
-
-            // 폴링 중지
-            stopPolling();
             
             // 🚀 슬롯 즉시 숨김 (isMultiplayer=false 전에)
             document.getElementById('playerSlotsLeft')?.classList.add('hidden');
