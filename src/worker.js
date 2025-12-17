@@ -259,6 +259,21 @@ export class GameStateRoom {
                       console.log(`[new_game] 🔍 비활성/이탈자 제거: ${beforeCount}명 → ${state.players.length}명`);
                   }
                   console.log(`[new_game] 🔍 players 초기화(턴제, 병합 후 활성 필터): ${state.players.length}명`, state.players.map(p => (p.id || p)));
+
+              // 🆕 lastSeen 기반 추가 필터링 (폴링 끊긴 플레이어 제거)
+              if (update.lastSeen && typeof update.lastSeen === 'object') {
+                  const nowTs = Date.now();
+                  const TTL = 60 * 1000; // 60초 이내 폴링만 인정
+                  const filtered = state.players.filter(p => {
+                      const pid = p.id || p;
+                      const last = update.lastSeen[pid];
+                      return typeof last === 'number' && (nowTs - last) <= TTL;
+                  });
+                  if (filtered.length !== state.players.length) {
+                      console.log(`[new_game] 🔍 lastSeen 필터 적용: ${state.players.length}명 → ${filtered.length}명 (TTL ${TTL}ms)`);
+                      state.players = filtered;
+                  }
+              }
               } else {
                   // KV에 players가 없으면 빈 배열
                   state.players = [];
@@ -313,6 +328,21 @@ export class GameStateRoom {
                       console.log(`[new_game] 시간제: 이탈자/비활성 제거 ${beforeCount}명 → ${state.players.length}명`);
                   }
                   console.log(`[new_game] 시간제: players 초기화(병합 후 활성 필터) ${state.players.length}명`);
+
+              // 🆕 lastSeen 기반 추가 필터링 (폴링 끊긴 플레이어 제거)
+              if (update.lastSeen && typeof update.lastSeen === 'object') {
+                  const nowTs = Date.now();
+                  const TTL = 60 * 1000; // 60초 이내 폴링만 인정
+                  const filtered = state.players.filter(p => {
+                      const pid = p.id || p;
+                      const last = update.lastSeen[pid];
+                      return typeof last === 'number' && (nowTs - last) <= TTL;
+                  });
+                  if (filtered.length !== state.players.length) {
+                      console.log(`[new_game] 시간제: lastSeen 필터 적용 ${state.players.length}명 → ${filtered.length}명 (TTL ${TTL}ms)`);
+                      state.players = filtered;
+                  }
+              }
               } else {
                   // KV에 players가 없으면 빈 배열
                   state.players = [];
@@ -1747,6 +1777,10 @@ async function handleGameState(request, env) {
                   if (roomData.players && roomData.players.length > 0) {
                       updateBody.players = roomData.players;
                   }
+              }
+              // 🆕 lastSeen을 함께 전달하여 서버에서 비활성(폴링 끊긴) 플레이어를 필터링
+              if (roomData.lastSeen) {
+                  updateBody.lastSeen = roomData.lastSeen;
               }
 
               // request body 업데이트
