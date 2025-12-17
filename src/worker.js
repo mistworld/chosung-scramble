@@ -857,8 +857,12 @@ async function handleRooms(env) {
               const roomId = roomData.id || key.name;
               const players = Array.isArray(roomData.players) ? roomData.players : [];
               
-              // 🚀 players가 비어있으면 무조건 제외 (방 파기된 방)
+              // 🚀 players가 비어있으면 즉시 삭제 (방 파기된 방)
               if (players.length === 0) {
+                  console.log(`[rooms] 빈 방 ${roomId} 즉시 삭제`);
+                  env.ROOM_LIST.delete(roomId).catch(e => {
+                      console.error(`[rooms] 방 삭제 실패 ${roomId}:`, e);
+                  });
                   continue;
               }
               
@@ -1028,7 +1032,8 @@ async function handleCreateRoom(request, env) {
           gameStarted: false,
           roundNumber: 0,
           scores: { [hostPlayerId]: 0 },
-          lastSeen: { [hostPlayerId]: now }
+          lastSeen: { [hostPlayerId]: now },
+          lastActivity: now  // 🚀 TTL 체크용
       };
       
       await env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
@@ -1078,6 +1083,20 @@ async function handleJoinRoom(request, env) {
       return jsonResponse({ error: 'Room is closed', message: '방이 삭제되었습니다' }, 404);
   }
   
+  // 🚀 시간제: TTL 체크 (비활성 방 차단)
+  if (roomData.gameMode === 'time') {
+      const now = Date.now();
+      const lastActivity = roomData.lastActivity || roomData.createdAt;
+      const INACTIVE_TIMEOUT = 5 * 60 * 1000; // 5분
+      
+      if (lastActivity && (now - lastActivity) > INACTIVE_TIMEOUT) {
+          console.log(`[join-room] 시간제 방 ${roomId} 비활성 (${Math.floor((now - lastActivity) / 1000)}초), 삭제 및 차단`);
+          // 비활성 방 즉시 삭제
+          await env.ROOM_LIST.delete(roomId);
+          return jsonResponse({ error: 'Room is closed', message: '방이 만료되었습니다' }, 404);
+      }
+  }
+  
   // 🚀 턴제: DO에서 실제 플레이어 수 확인 (유령 방 입장 차단)
   if (roomData.gameMode === 'turn' && env.GAME_STATE) {
       try {
@@ -1090,13 +1109,20 @@ async function handleJoinRoom(request, env) {
           if (doResponse.ok) {
               const doState = await doResponse.json();
               if (!doState.players || doState.players.length === 0) {
-                  console.log(`[join-room] 턴제 방 ${roomId} DO에 플레이어 없음, 입장 차단`);
+                  console.log(`[join-room] 턴제 방 ${roomId} DO에 플레이어 없음, 삭제 및 차단`);
+                  // 빈 방 즉시 삭제
+                  await env.ROOM_LIST.delete(roomId);
                   return jsonResponse({ error: 'Room is closed', message: '방이 비어있습니다' }, 404);
               }
+          } else {
+              // 🚀 DO 응답 실패 시 보수적 차단
+              console.log(`[join-room] 턴제 방 ${roomId} DO 응답 실패, 입장 차단`);
+              return jsonResponse({ error: 'Room unavailable', message: '방 상태를 확인할 수 없습니다' }, 503);
           }
       } catch (e) {
-          console.error('[join-room] DO 확인 실패 (무시):', e);
-          // DO 확인 실패 시 KV 기준으로 진행
+          // 🚀 DO 확인 실패 시 보수적 차단 (KV 통과 안 함)
+          console.error('[join-room] DO 확인 실패, 입장 차단:', e);
+          return jsonResponse({ error: 'Room unavailable', message: '방 상태를 확인할 수 없습니다' }, 503);
       }
   }
 
@@ -1129,6 +1155,9 @@ async function handleJoinRoom(request, env) {
       });
       roomData.scores = roomData.scores || {};
       roomData.scores[playerId] = 0;
+      
+      // 🚀 lastActivity 업데이트 (TTL 체크용)
+      roomData.lastActivity = Date.now();
       
       // 🔍 디버깅: 시간제 모드 입장 시 상세 로그
       console.log(`[join-room] 🔍 새 플레이어 입장: roomId=${roomId}, playerId=${playerId}, gameMode=${roomData.gameMode}, gameStarted=${roomData.gameStarted}, players=${roomData.players.length}명`, 
@@ -1212,6 +1241,9 @@ async function handleJoinRoom(request, env) {
       
       existingPlayer.name = playerName || existingPlayer.name;
       existingPlayer.joinedAt = Date.now();
+      
+      // 🚀 lastActivity 업데이트 (TTL 체크용)
+      roomData.lastActivity = Date.now();
       
       // 🔍 디버깅: 기존 플레이어 KV 업데이트 전
       console.log(`[join-room] 🔍 기존 플레이어 KV 업데이트: playerCount=${roomData.players.length}명`);
