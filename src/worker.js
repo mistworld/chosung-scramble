@@ -292,14 +292,35 @@ export class GameStateRoom {
               // 🚀 시간제 모드: 방장은 players[0] (첫 입장자)
               state.gameMode = 'time';
               
-              // players 초기화: KV의 players 사용
+              // 🚀 안전장치: 게임 시작 시 현재 접속 중인 플레이어만 사용 (턴제와 동일)
+              // KV의 players (현재 접속 중)와 DO의 players (이전 게임)를 비교
+              // KV에 있는 플레이어만 새 게임에 참여 (브라우저 종료한 사람 제거)
               if (Array.isArray(update.players) && update.players.length > 0) {
-                  state.players = update.players;
-                  console.log(`[new_game] 시간제: players 초기화 ${state.players.length}명`);
-              } else if (state.players && Array.isArray(state.players) && state.players.length > 0) {
-                  console.log(`[new_game] 시간제: DO players 사용 ${state.players.length}명`);
+                  // KV의 현재 접속 중인 플레이어 ID 목록
+                  const activePlayerIds = new Set(update.players.map(p => p.id || p));
+                  
+                  // DO의 players 중 KV에 있는 사람만 유지 (브라우저 종료한 사람 제거)
+                  if (state.players && Array.isArray(state.players) && state.players.length > 0) {
+                      const beforeCount = state.players.length;
+                      state.players = state.players.filter(p => {
+                          const pid = p.id || p;
+                          return activePlayerIds.has(pid);
+                      });
+                      const afterCount = state.players.length;
+                      const removedCount = beforeCount - afterCount;
+                      if (removedCount > 0) {
+                          console.log(`[new_game] 시간제: 이탈자 ${removedCount}명 제거: ${beforeCount}명 → ${afterCount}명`);
+                      }
+                      console.log(`[new_game] 시간제: players 초기화 ${state.players.length}명`);
+                  } else {
+                      // DO에 없으면 KV 사용
+                      state.players = update.players;
+                      console.log(`[new_game] 시간제: players 초기화 (KV 사용) ${state.players.length}명`);
+                  }
               } else {
+                  // KV에 players가 없으면 빈 배열
                   state.players = [];
+                  console.log(`[new_game] 시간제: players 초기화 (빈 배열)`);
               }
           }
           
