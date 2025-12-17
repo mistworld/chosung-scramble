@@ -4606,7 +4606,8 @@
                     return;
                 }
                 
-                if (!confirm('게임을 종료하시겠습니까?')) return;
+                // 🎉 토스트 메시지 표시 (확인 모달 제거)
+                showToast('최초의 시작화면으로 이동합니다.', 2000);
             }
             
             clearInterval(gameState.gameTimer);
@@ -8013,6 +8014,9 @@
         
         // 방 나가기 - 최초 화면으로 완전히 돌아가기
         async function leaveRoom() {
+            // 🎉 토스트 메시지 표시
+            showToast('최초의 시작화면으로 이동합니다.', 2000);
+            
             // 🚀 폴링 먼저 중지 (슬롯 덮어쓰기 방지)
             stopPolling();
             
