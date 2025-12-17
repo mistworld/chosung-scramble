@@ -234,30 +234,36 @@ export class GameStateRoom {
               state.eliminatedPlayers = [];
               state.turnCount = {};
               state.isFirstTurn = true;
-              
-              // 🚀 게임 시작 시 players 초기화
-              // 🚀 DO의 state.players를 우선 사용 (KV 무시) - 게임 종료 후 나간 사람 제거 보장
-              // KV의 players는 동기화 지연으로 인해 오래된 데이터일 수 있음
-              // 🚀 탈락자도 제거 - 나간 사람은 state.players에서 이미 제거되었거나, eliminatedPlayers에 있어도 게임 시작 시 제외
-              const eliminatedSet = new Set(state.eliminatedPlayers || []);
-              if (state.players && Array.isArray(state.players) && state.players.length > 0) {
-                  // DO의 players 사용 (나간 사람은 이미 제거됨), 탈락자도 필터링
-                  state.players = state.players.filter(p => {
-                      const pid = p.id || p;
-                      return !eliminatedSet.has(pid); // 탈락자 제외
-                  });
-                  console.log(`[new_game] 🔍 players 초기화: DO의 players 사용 (${state.players.length}명, 탈락자 제외)`, state.players.map(p => (p.id || p)));
-                  console.log(`[new_game] 🔍 eliminatedPlayers 초기화 전=${state.eliminatedPlayers?.length || 0}명`, state.eliminatedPlayers || []);
-              } else if (Array.isArray(update.players) && update.players.length > 0) {
-                  // DO에 없으면 KV 사용 (폴백), 탈락자 필터링
-                  state.players = update.players.filter(p => {
-                      const pid = p.id || p;
-                      return !eliminatedSet.has(pid);
-                  });
-                  console.log(`[new_game] players 초기화: KV의 players 사용 (폴백, ${state.players.length}명, 탈락자 제외)`, state.players.map(p => (p.id || p)));
+
+              // 🚀 안전장치: 게임 시작 시 현재 접속 중인 플레이어만 사용
+              // KV의 players (현재 접속 중)와 DO의 players (이전 게임)를 비교
+              // KV에 있는 플레이어만 새 게임에 참여 (브라우저 종료한 사람 제거)
+              if (Array.isArray(update.players) && update.players.length > 0) {
+                  // KV의 현재 접속 중인 플레이어 ID 목록
+                  const activePlayerIds = new Set(update.players.map(p => p.id || p));
+                  
+                  // DO의 players 중 KV에 있는 사람만 유지 (브라우저 종료한 사람 제거)
+                  if (state.players && Array.isArray(state.players) && state.players.length > 0) {
+                      const beforeCount = state.players.length;
+                      state.players = state.players.filter(p => {
+                          const pid = p.id || p;
+                          return activePlayerIds.has(pid);
+                      });
+                      const afterCount = state.players.length;
+                      const removedCount = beforeCount - afterCount;
+                      if (removedCount > 0) {
+                          console.log(`[new_game] 🔍 브라우저 종료한 플레이어 ${removedCount}명 제거: ${beforeCount}명 → ${afterCount}명`);
+                      }
+                      console.log(`[new_game] 🔍 players 초기화: 현재 접속 중인 플레이어 (${state.players.length}명)`, state.players.map(p => (p.id || p)));
+                  } else {
+                      // DO에 없으면 KV 사용
+                      state.players = update.players;
+                      console.log(`[new_game] players 초기화: KV의 players 사용 (${state.players.length}명)`, state.players.map(p => (p.id || p)));
+                  }
               } else {
-                  // 둘 다 없으면 빈 배열
+                  // KV에 players가 없으면 빈 배열
                   state.players = [];
+                  console.log(`[new_game] players 초기화: 빈 배열 (KV에 players 없음)`);
               }
               // 🚀 새 게임 시작 시 eliminatedPlayers 초기화 (다시 참여 가능하도록)
               state.eliminatedPlayers = [];
