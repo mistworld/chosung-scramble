@@ -5478,6 +5478,34 @@
                 // 🆕 입장 시 즉시 슬롯 표시 (폴링 시작 전에도)
                 updateScoreboard(roomData);
                 
+                // 🎯 종료 모달 뜬 상태에서 입장한 경우: 버튼 및 채팅 설정
+                if (roomData.endTime && !roomData.gameStarted) {
+                    console.log('[입장] 종료 모달 뜬 대기실 입장 - 버튼 및 채팅 설정');
+                    
+                    // 채팅창 표시
+                    document.getElementById('chatContainer')?.classList.remove('hidden');
+                    
+                    // 버튼 텍스트 및 기능 변경 (약간의 지연을 두어 DOM 렌더링 후 실행)
+                    setTimeout(() => {
+                        const soloBtn = document.querySelector('.mode-start-btn.solo');
+                        const multiBtn = document.querySelector('.mode-start-btn.together');
+                        
+                        if (soloBtn) {
+                            soloBtn.textContent = '⏸️ 대기하기';
+                            soloBtn.onclick = null; // 클릭 무효화
+                            soloBtn.style.opacity = '0.5';
+                            soloBtn.style.cursor = 'default';
+                        }
+                        
+                        if (multiBtn) {
+                            multiBtn.textContent = '🚪 나가기';
+                            multiBtn.onclick = () => {
+                                leaveRoom();
+                            };
+                        }
+                    }, 100);
+                }
+                
                 startPolling();
                 updateStartScreenButtons();
                 // showToast('게임 시작을 기다리는 중...'); // 제거
