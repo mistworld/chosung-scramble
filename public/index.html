@@ -6072,11 +6072,15 @@
                                     livesEarned = 5;
                                 }
                                 
-                                // 효과음 재생
-                                if (livesEarned >= 1) {
-                                    playScoreSound(100); // 생명권 획득
+                                // 🎵 효과음 재생 (생명권 개수에 따라 정확한 사운드)
+                                if (livesEarned === 1) {
+                                    playScoreSound(100); // ❤️1개 → 100 110 120.mp3
+                                } else if (livesEarned === 3) {
+                                    playScoreSound(400); // ❤️❤️❤️3개 → 400.mp3
+                                } else if (livesEarned === 5) {
+                                    playScoreSound(900); // ❤️❤️❤️❤️❤️5개 → 900.mp3
                                 } else {
-                                    playScoreSound(30); // 생명권 미획득
+                                    playScoreSound(30); // 생명권 없음 → 30.mp3
                                 }
                             }
                         }
@@ -7850,8 +7854,8 @@
                     turnTimerEl.textContent = displayValue;
                 }
                 
-                // 효과음 재생 (2초, 1초 남았을 때)
-                if (isMyTurn && (timeLeftDisplay === 2 || timeLeftDisplay === 1) && timeLeftDisplay !== lastPlayedSecond) {
+                // 🎵 효과음 재생 (2초, 1초 남았을 때) - 모든 플레이어에게 공유
+                if ((timeLeftDisplay === 2 || timeLeftDisplay === 1) && timeLeftDisplay !== lastPlayedSecond) {
                     lastPlayedSecond = timeLeftDisplay;
                     try {
                         const turnSecondsSound = new Audio('./sound/turn_seconds.mp3');
