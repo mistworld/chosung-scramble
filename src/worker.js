@@ -789,6 +789,7 @@ async function handleRooms(env) {
       'Cache-Control': 'no-cache, no-store, must-revalidate'
   };
   const STALE_PLAYER_TIMEOUT = 5 * 1000; // 5초 (안정적인 대기방 목록 표시)
+  const INACTIVE_TIMEOUT = 90 * 1000; // 90초 활동 없으면 방 파기
   try {
       if (!env.ROOM_LIST) {
           console.log('ROOM_LIST가 없음!');
@@ -865,6 +866,18 @@ async function handleRooms(env) {
                   });
                   continue;
               }
+
+              // 🚀 시간제: 비활성 TTL 초과 시 즉시 삭제 (sendBeacon 실패 대비)
+              if (roomData.gameMode !== 'turn') {
+                  const lastActivity = roomData.lastActivity || createdAt || 0;
+                  if (now - lastActivity > INACTIVE_TIMEOUT) {
+                      console.log(`[rooms] 시간제 방 ${roomId} TTL 초과로 삭제 (lastActivity=${lastActivity}, now=${now})`);
+                      env.ROOM_LIST.delete(roomId).catch(e => {
+                          console.error(`[rooms] TTL 초과 방 삭제 실패 ${roomId}:`, e);
+                      });
+                      continue;
+                  }
+              }
               
               // 🚀 턴제 방: DO에서 실제 플레이어 수 확인 (병렬로 가져온 데이터 사용)
               let playerCount = players.length;
@@ -875,7 +888,10 @@ async function handleRooms(env) {
                       playerCount = doState.players.length;
                       // DO에 플레이어가 없으면 방 제외
                       if (playerCount === 0) {
-                          console.log(`[rooms] 턴제 방 ${roomId} DO에 플레이어 없음, 제외`);
+                          console.log(`[rooms] 턴제 방 ${roomId} DO에 플레이어 없음, 삭제`);
+                          env.ROOM_LIST.delete(roomId).catch(e => {
+                              console.error(`[rooms] 턴제 빈 방 삭제 실패 ${roomId}:`, e);
+                          });
                           continue;
                       }
                   }
@@ -922,12 +938,38 @@ async function handleRooms(env) {
               
               // 🚀 players가 비어있으면 무조건 제외 (방 파기된 방)
               if (players.length === 0) {
+              try {
+                  await env.ROOM_LIST.delete(roomId);
+              } catch (e) {
+                  console.error(`[rooms] 최근 방 삭제 실패 ${roomId}:`, e);
+              }
                   continue;
               }
               
               // 🚀 lastSeen 필터링 완전 제거 (안전장치로 대체)
               // players.length를 그대로 사용
               let playerCount = players.length;
+
+          // 🚀 시간제: 비활성 TTL 초과 시 제외 (sendBeacon 실패 대비)
+          if (roomData.gameMode !== 'turn') {
+              const lastActivity = roomData.lastActivity || createdAt || 0;
+              if (now - lastActivity > 90 * 1000) {
+                  try {
+                      await env.ROOM_LIST.delete(roomId);
+                  } catch (e) {
+                      console.error(`[rooms] 최근 방 TTL 삭제 실패 ${roomId}:`, e);
+                  }
+                  continue;
+              }
+          }
+
+              // 🚀 시간제: 비활성 TTL 초과 시 제외 (sendBeacon 실패 대비)
+              if (roomData.gameMode !== 'turn') {
+                  const lastActivity = roomData.lastActivity || createdAt || 0;
+                  if (now - lastActivity > 90 * 1000) {
+                      continue;
+                  }
+              }
 
               if ((now - createdAt) >= ONE_HOUR) continue;
               if (playerCount <= 0) continue;
@@ -1082,14 +1124,44 @@ async function handleJoinRoom(request, env) {
   if (!roomData.players || roomData.players.length === 0) {
       return jsonResponse({ error: 'Room is closed', message: '방이 삭제되었습니다' }, 404);
   }
-  
-  // 🚀 제거: TTL/DO 체크가 입장을 막고 있어서 임시로 제거
+
+  // 🚀 시간제: 비활성 TTL 초과 시 즉시 차단 및 삭제 (sendBeacon 실패 대비)
+  if (roomData.gameMode !== 'turn') {
+      const now = Date.now();
+      const lastActivity = roomData.lastActivity || roomData.createdAt || 0;
+      const INACTIVE_TIMEOUT = 90 * 1000;
+      if (now - lastActivity > INACTIVE_TIMEOUT) {
+          try { await env.ROOM_LIST.delete(roomId); } catch (e) { console.error('[join-room] TTL 초과 방 삭제 실패:', e); }
+          return jsonResponse({ error: 'Room is closed', message: '방이 만료되었습니다' }, 404);
+      }
+  }
 
   // 🚀 시간제 모드: 블랙리스트 제거 (입퇴장 완전 자유)
   // 🚀 재입장은 항상 가능하므로 players.length 체크 제거
   // 새 플레이어만 5명 제한 적용 (재입장은 제외)
   if (!roomData.players.find(p => p.id === playerId) && roomData.players.length >= 5) {
       return jsonResponse({ error: 'Room is full' }, 400);
+  }
+
+  // 🚀 턴제: DO에서 실제 플레이어 수 확인 (유령 방 입장 차단, 실패 시 보수적 차단)
+  if (roomData.gameMode === 'turn' && env.GAME_STATE) {
+      try {
+          const id = env.GAME_STATE.idFromName(roomId);
+          const stub = env.GAME_STATE.get(id);
+          const doRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, { method: 'GET' });
+          const doResponse = await stub.fetch(doRequest);
+          if (doResponse.ok) {
+              const doState = await doResponse.json();
+              if (!doState.players || doState.players.length === 0) {
+                  console.log(`[join-room] 턴제 방 ${roomId} DO에 플레이어 없음, 입장 차단`);
+                  return jsonResponse({ error: 'Room is closed', message: '방이 비어있습니다' }, 404);
+              }
+          } else {
+              console.warn(`[join-room] 턴제 DO 응답 실패 code=${doResponse.status}, KV 기준으로 진행`);
+          }
+      } catch (e) {
+          console.error('[join-room] DO 확인 실패 (KV 기준으로 진행):', e);
+      }
   }
   if (playerName) {
       const duplicateName = roomData.players.find(p => 
@@ -1369,6 +1441,7 @@ async function handleGameState(request, env) {
               if (pingPlayerId) {
           if (!roomData.lastSeen) roomData.lastSeen = {};
           roomData.lastSeen[pingPlayerId] = now;
+          roomData.lastActivity = now; // 🚀 활동 갱신 (TTL 용)
           // 🚀 비동기로 처리하여 응답 지연 최소화 (await 제거)
           env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
               metadata: {
@@ -1513,10 +1586,34 @@ async function handleGameState(request, env) {
               console.log(`[game-state] 턴제 - KV players 사용 (DO 없음): ${finalPlayers.length}명`);
           }
       } else {
-          // 🚀 시간제 모드: 비활성 플레이어 정리 제거 (입퇴장 완전 자유)
-          // 게임 중, 대기실, 종료 모달 모두 입퇴장 자유
-          // 이탈자는 다음 판 시작할 때 자동 정리됨
-          finalPlayers = roomData.players || [];
+          // 🚀 시간제 모드: TTL 기반으로 비활성 플레이어 정리 (sendBeacon 실패 대비)
+          const INACTIVE_TIMEOUT = 90 * 1000;
+          const nowTs = Date.now();
+          const filtered = (roomData.players || []).filter(p => {
+              const lastActivity = roomData.lastActivity || roomData.createdAt || 0;
+              return nowTs - lastActivity <= INACTIVE_TIMEOUT;
+          });
+          // TTL로 필터링 후 KV에도 반영
+          if (filtered.length !== (roomData.players?.length || 0)) {
+              roomData.players = filtered;
+              try {
+                  await env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
+                      metadata: {
+                          id: roomId,
+                          roomNumber: roomData.roomNumber || 0,
+                          createdAt: roomData.createdAt,
+                          playerCount: roomData.players.length,
+                          gameStarted: roomData.gameStarted || false,
+                          roundNumber: roomData.roundNumber || 0,
+                          title: roomData.title || '초성 배틀방',
+                          gameMode: roomData.gameMode || 'time'
+                      }
+                  });
+              } catch (e) {
+                  console.error('[game-state] 시간제 TTL 반영 실패:', e);
+              }
+          }
+          finalPlayers = filtered;
       }
       // 시간제 모드: KV의 players 사용 (DO는 게임 상태만 관리)
       
