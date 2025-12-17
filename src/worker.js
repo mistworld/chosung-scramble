@@ -586,20 +586,23 @@ export class GameStateRoom {
   async persistState(state, shouldSyncKV = false) {
       // 🚀 persistState 후 캐시 무효화 (다음 getState() 호출 시 최신 상태 가져옴)
       this.roomStatePromise = null;
-      
+
       // 🚀 playersVersion 증가 (players가 변경될 때만)
       if (shouldSyncKV) {
           state.playersVersion = (state.playersVersion || 0) + 1;
           state.lastPlayersUpdate = Date.now();
       }
-      
+
       await this.state.storage.put('roomState', state);
-      
+
       // 🚀 DO 변경 시 KV 즉시 동기화 (players 변경 시에만)
+      // ✅ await 추가: KV 동기화 완료 대기 (폴링보다 먼저 완료 보장)
       if (shouldSyncKV && this.env.ROOM_LIST && state.id) {
-          this.syncKVFromDO(state).catch(e => {
+          try {
+              await this.syncKVFromDO(state);
+          } catch (e) {
               console.error('[DO→KV 동기화 실패]:', e);
-          });
+          }
       }
   }
 
