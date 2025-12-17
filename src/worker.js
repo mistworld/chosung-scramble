@@ -1208,8 +1208,28 @@ async function handleLeaveRoom(request, env) {
   if (roomData.scores) delete roomData.scores[playerId];
   if (roomData.playerWords) delete roomData.playerWords[playerId];
   
-  // 🚀 턴제 모드: 게임 상태와 관계없이 항상 DO에서 제거 (탈락자/관전자 포함)
+  // 🚀 턴제 모드: 게임 중일 때만 DO에서 제거, 대기실에서는 KV만 사용
+  // 게임 중 여부 확인
+  let isGameRunning = false;
   if (roomData.gameMode === 'turn' && env.GAME_STATE) {
+      try {
+          const id = env.GAME_STATE.idFromName(roomId);
+          const stub = env.GAME_STATE.get(id);
+          const stateRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
+              method: 'GET'
+          });
+          const stateResponse = await stub.fetch(stateRequest);
+          if (stateResponse.ok) {
+              const doState = await stateResponse.json();
+              isGameRunning = doState.gameStarted && !doState.endTime;
+          }
+      } catch (e) {
+          console.error('[leave-room] DO 상태 확인 실패 (무시):', e);
+      }
+  }
+  
+  // 🚀 턴제 모드: 게임 중일 때만 DO에서 제거
+  if (roomData.gameMode === 'turn' && env.GAME_STATE && isGameRunning) {
       try {
           const id = env.GAME_STATE.idFromName(roomId);
           const stub = env.GAME_STATE.get(id);
