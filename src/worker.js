@@ -1405,51 +1405,49 @@ async function handleGameState(request, env) {
       const originalDoPlayers = doState.players ? [...doState.players] : null; // 🚀 원본 DO players 백업 (로그용)
       
       if (doState.gameMode === 'turn') {
-          // 턴제 모드: DO의 state.players가 있으면 우선 사용 (게임 중/대기실 모두)
-          // 이렇게 해야 handleLeaveRoom에서 DO에서 제거한 후 즉시 반영됨
-          // 🚀 DO의 players 배열이 있으면 무조건 사용 (빈 배열도 포함, 최신 상태 보장)
-          if (doState.players && Array.isArray(doState.players)) {
+          // 🚀 턴제 모드: 게임 중에는 DO 우선, 대기실에서는 KV 우선!
+          // 대기실(게임 종료 후)에서는 입퇴장이 즉시 반영되어야 하므로 KV 사용
+          const isGameRunning = doState.gameStarted && !doState.endTime;
+          
+          if (isGameRunning && doState.players && Array.isArray(doState.players)) {
+              // 🚀 게임 중: DO의 players 사용 (턴 관리 필요)
               finalPlayers = doState.players;
-              console.log(`[game-state] DO players 사용: ${finalPlayers.length}명 (DO 원본)`, finalPlayers.map(p => ({ id: (p.id || p), name: (p.name || '이름없음') })));
-              // 🚀 DO의 players가 KV와 다르면 항상 동기화 (제거된 플레이어 반영)
-              // DO의 players가 더 최신이면 KV도 동기화 (다음 요청부터는 KV도 최신 상태)
-              const doPlayerIds = new Set(finalPlayers.map(p => (p.id || p)));
-              const kvPlayerIds = new Set((roomData.players || []).map(p => p.id));
-              const playersChanged = finalPlayers.length !== roomData.players.length || 
-                                   !finalPlayers.every(p => kvPlayerIds.has(p.id || p)) ||
-                                   !(roomData.players || []).every(p => doPlayerIds.has(p.id));
+              console.log(`[game-state] 게임 중 - DO players 사용: ${finalPlayers.length}명`, finalPlayers.map(p => ({ id: (p.id || p), name: (p.name || '이름없음') })));
+          } else {
+              // 🚀 대기실(종료 모달 포함): KV의 players 사용 (입퇴장 즉시 반영)
+              finalPlayers = roomData.players || [];
+              console.log(`[game-state] 대기실 - KV players 사용: ${finalPlayers.length}명`, finalPlayers.map(p => ({ id: p.id, name: p.name })));
               
-              if (playersChanged) {
-                  const orderedPlayerIds = finalPlayers.map(p => p.id || p);
-                  const kvPlayers = (roomData.players || []).filter(p => orderedPlayerIds.includes(p.id));
-                  const orderedPlayers = orderedPlayerIds.map(pid => 
-                      kvPlayers.find(p => p.id === pid) || 
-                      finalPlayers.find(p => (p.id || p) === pid)
-                  ).filter(Boolean);
-                  // 🚀 DO의 players 개수와 일치하면 KV 동기화 (비동기로 처리하여 응답 지연 최소화)
-                  if (orderedPlayers.length === finalPlayers.length) {
-                      roomData.players = orderedPlayers;
-                      // 🚀 비동기로 KV 업데이트 (DO가 단일 소스이므로 즉시 응답 가능)
-                      env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
-                          metadata: {
-                              id: roomId,
-                              roomNumber: roomData.roomNumber || 0,
-                              createdAt: roomData.createdAt,
-                              playerCount: roomData.players.length,
-                              gameStarted: roomData.gameStarted || false,
-                              roundNumber: roomData.roundNumber || 0,
-                              title: roomData.title || '초성 배틀방',
-                              gameMode: roomData.gameMode || 'time'
-                          }
-                      }).catch(e => {
-                          console.error('[game-state] KV 동기화 실패:', e);
-                          // 실패해도 계속 진행 (DO가 단일 소스이므로)
-                      });
+              // 🚀 KV와 DO 동기화 (DO도 최신 상태로 유지)
+              if (doState.players && Array.isArray(doState.players)) {
+                  const doPlayerIds = new Set(doState.players.map(p => (p.id || p)));
+                  const kvPlayerIds = new Set(finalPlayers.map(p => p.id));
+                  const playersChanged = finalPlayers.length !== doState.players.length || 
+                                       !finalPlayers.every(p => doPlayerIds.has(p.id)) ||
+                                       !doState.players.every(p => kvPlayerIds.has(p.id || p));
+                  
+                  if (playersChanged) {
+                      // DO와 KV가 다르면 KV 기준으로 DO 동기화 (대기실에서는 KV가 최신)
+                      console.log(`[game-state] 대기실 - DO 동기화 필요: DO=${doState.players.length}명, KV=${finalPlayers.length}명`);
+                      
+                      // sync_players 액션으로 DO 업데이트
+                      if (env.GAME_STATE) {
+                          const id = env.GAME_STATE.idFromName(roomId);
+                          const stub = env.GAME_STATE.get(id);
+                          const syncRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                  action: 'sync_players',
+                                  players: finalPlayers
+                              })
+                          });
+                          stub.fetch(syncRequest).catch(e => {
+                              console.error('[game-state] DO 동기화 실패 (무시):', e);
+                          });
+                      }
                   }
               }
-          } else {
-              // DO에 players가 없으면 KV 사용 (초기 상태)
-              finalPlayers = roomData.players || [];
           }
       } else {
           // 🚀 시간제 모드: 비활성 플레이어 정리 제거 (입퇴장 완전 자유)
