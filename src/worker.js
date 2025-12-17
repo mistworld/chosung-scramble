@@ -808,7 +808,35 @@ async function handleRooms(env) {
                   continue;
               }
               
+              // 🚀 턴제 방: DO에서 실제 플레이어 수 확인 (KV와 DO 불일치 방지)
               let playerCount = players.length;
+              if (roomData.gameMode === 'turn' && env.GAME_STATE) {
+                  try {
+                      const id = env.GAME_STATE.idFromName(roomId);
+                      const stub = env.GAME_STATE.get(id);
+                      const doRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
+                          method: 'GET'
+                      });
+                      const doResponse = await stub.fetch(doRequest);
+                      if (doResponse.ok) {
+                          const doState = await doResponse.json();
+                          // DO의 players가 있으면 DO 기준으로 playerCount 설정
+                          if (doState.players && Array.isArray(doState.players)) {
+                              playerCount = doState.players.length;
+                              // DO에 플레이어가 없으면 방 제외
+                              if (playerCount === 0) {
+                                  console.log(`[rooms] 턴제 방 ${roomId} DO에 플레이어 없음, 제외`);
+                                  continue;
+                              }
+                          }
+                      }
+                  } catch (e) {
+                      console.error(`[rooms] 턴제 방 ${roomId} DO 체크 실패 (무시):`, e);
+                      // DO 체크 실패 시 KV 기준으로 진행
+                  }
+              } else {
+                  playerCount = players.length;
+              }
 
               // 🚀 시간제 대기방: lastSeen 필터링 완화 (안정적인 목록 표시)
               // 게임 중이거나 게임 종료 후 대기실 상태면 lastSeen 필터링 안 함 (방 목록에 항상 표시)
