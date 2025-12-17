@@ -5437,6 +5437,37 @@
                 // 슬롯 표시
                 updateScoreboard(roomData);
                 
+                // 🎯 턴제: 버튼 변경 (게임 시작 + 나가기)
+                if (roomData.gameMode === 'turn') {
+                    // 채팅창 표시
+                    document.getElementById('chatContainer')?.classList.remove('hidden');
+                    
+                    setTimeout(() => {
+                        const buttonsContainer = document.querySelector('.mode-buttons');
+                        if (!buttonsContainer) return;
+                        
+                        const isHost = roomData.players && roomData.players.length > 0 && 
+                                     roomData.players[0].id === multiplayerState.playerId;
+                        
+                        if (isHost) {
+                            buttonsContainer.innerHTML = `
+                                <button class="mode-start-btn solo" onclick="sendGameStart(true)">
+                                    🎮 게임 시작
+                                </button>
+                                <button class="mode-start-btn together" onclick="leaveRoom()">
+                                    🚪 나가기
+                                </button>
+                            `;
+                        } else {
+                            buttonsContainer.innerHTML = `
+                                <button class="mode-start-btn together" onclick="leaveRoom()" style="margin: 0 auto;">
+                                    🚪 나가기
+                                </button>
+                            `;
+                        }
+                    }, 100);
+                }
+                
                 // 폴링 시작
                 console.log('[입장] 대기실 상태 - startPolling() 호출');
                 startPolling();
