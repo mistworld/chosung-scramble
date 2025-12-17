@@ -3868,6 +3868,22 @@
             try {
                 const action = isNewRound ? 'new_game' : 'start_game';
                 console.log(`🎯 [방장] ${action} 신호 전송:`, gameState.currentConsonants);
+
+                // 🚀 시작 직전 서버 상태 재확인 + 클라이언트와 교차검증 (유령 슬롯 제거)
+                let activePlayers = multiplayerState.players || [];
+                try {
+                    const res = await fetch(`https://chosung-scramble.pages.dev/api/game-state?roomId=${multiplayerState.roomId}`);
+                    if (res.ok) {
+                        const latest = await res.json();
+                        const serverPlayers = latest.players || [];
+                        const pollingSet = new Set((multiplayerState.players || []).map(p => p.id));
+                        const filtered = serverPlayers.filter(p => pollingSet.has(p.id));
+                        activePlayers = filtered.length > 0 ? filtered : serverPlayers;
+                    }
+                } catch (e) {
+                    console.warn('[sendGameStart] 최신 상태 조회 실패 (무시):', e);
+                }
+
                 await fetch(`https://chosung-scramble.pages.dev/api/game-state?roomId=${multiplayerState.roomId}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -3875,7 +3891,8 @@
                         action: action, 
                         consonants: gameState.currentConsonants, 
                         startTime: Date.now(),
-                        timeLeft: 180 
+                        timeLeft: 180,
+                        players: activePlayers
                     })
                 });
             } catch (error) {
