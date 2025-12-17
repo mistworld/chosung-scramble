@@ -236,30 +236,29 @@ export class GameStateRoom {
               state.isFirstTurn = true;
 
               // 🚀 안전장치: 게임 시작 시 현재 접속 중인 플레이어만 사용
-              // KV의 players (현재 접속 중)와 DO의 players (이전 게임)를 비교
-              // KV에 있는 플레이어만 새 게임에 참여 (브라우저 종료한 사람 제거)
+              // KV의 players (현재 접속 중)를 기준으로, DO+KV를 합친 뒤 활성만 남김
               if (Array.isArray(update.players) && update.players.length > 0) {
-                  // KV의 현재 접속 중인 플레이어 ID 목록
                   const activePlayerIds = new Set(update.players.map(p => p.id || p));
-                  
-                  // DO의 players 중 KV에 있는 사람만 유지 (브라우저 종료한 사람 제거)
-                  if (state.players && Array.isArray(state.players) && state.players.length > 0) {
-                      const beforeCount = state.players.length;
-                      state.players = state.players.filter(p => {
-                          const pid = p.id || p;
-                          return activePlayerIds.has(pid);
-                      });
-                      const afterCount = state.players.length;
-                      const removedCount = beforeCount - afterCount;
-                      if (removedCount > 0) {
-                          console.log(`[new_game] 🔍 브라우저 종료한 플레이어 ${removedCount}명 제거: ${beforeCount}명 → ${afterCount}명`);
-                      }
-                      console.log(`[new_game] 🔍 players 초기화: 현재 접속 중인 플레이어 (${state.players.length}명)`, state.players.map(p => (p.id || p)));
-                  } else {
-                      // DO에 없으면 KV 사용
-                      state.players = update.players;
-                      console.log(`[new_game] players 초기화: KV의 players 사용 (${state.players.length}명)`, state.players.map(p => (p.id || p)));
+                  const doPlayers = Array.isArray(state.players) ? [...state.players] : [];
+                  const kvPlayers = update.players;
+
+                  // DO + KV 합치기 (id 기준)
+                  const mergedMap = new Map();
+                  doPlayers.forEach(p => mergedMap.set(p.id || p, p));
+                  kvPlayers.forEach(p => {
+                      const pid = p.id || p;
+                      if (!mergedMap.has(pid)) mergedMap.set(pid, p);
+                  });
+
+                  // 활성(KV에 존재)만 남기기
+                  const mergedPlayers = Array.from(mergedMap.values()).filter(p => activePlayerIds.has(p.id || p));
+                  const beforeCount = state.players?.length || 0;
+                  state.players = mergedPlayers;
+                  const removedCount = beforeCount - state.players.length;
+                  if (removedCount > 0) {
+                      console.log(`[new_game] 🔍 비활성/이탈자 제거: ${beforeCount}명 → ${state.players.length}명`);
                   }
+                  console.log(`[new_game] 🔍 players 초기화(턴제, 병합 후 활성 필터): ${state.players.length}명`, state.players.map(p => (p.id || p)));
               } else {
                   // KV에 players가 없으면 빈 배열
                   state.players = [];
@@ -293,30 +292,27 @@ export class GameStateRoom {
               state.gameMode = 'time';
               
               // 🚀 안전장치: 게임 시작 시 현재 접속 중인 플레이어만 사용 (턴제와 동일)
-              // KV의 players (현재 접속 중)와 DO의 players (이전 게임)를 비교
-              // KV에 있는 플레이어만 새 게임에 참여 (브라우저 종료한 사람 제거)
+              // KV의 players를 기준으로 DO+KV를 합친 뒤 활성만 남김 (시간제도 동일하게 복구)
               if (Array.isArray(update.players) && update.players.length > 0) {
-                  // KV의 현재 접속 중인 플레이어 ID 목록
                   const activePlayerIds = new Set(update.players.map(p => p.id || p));
-                  
-                  // DO의 players 중 KV에 있는 사람만 유지 (브라우저 종료한 사람 제거)
-                  if (state.players && Array.isArray(state.players) && state.players.length > 0) {
-                      const beforeCount = state.players.length;
-                      state.players = state.players.filter(p => {
-                          const pid = p.id || p;
-                          return activePlayerIds.has(pid);
-                      });
-                      const afterCount = state.players.length;
-                      const removedCount = beforeCount - afterCount;
-                      if (removedCount > 0) {
-                          console.log(`[new_game] 시간제: 이탈자 ${removedCount}명 제거: ${beforeCount}명 → ${afterCount}명`);
-                      }
-                      console.log(`[new_game] 시간제: players 초기화 ${state.players.length}명`);
-                  } else {
-                      // DO에 없으면 KV 사용
-                      state.players = update.players;
-                      console.log(`[new_game] 시간제: players 초기화 (KV 사용) ${state.players.length}명`);
+                  const doPlayers = Array.isArray(state.players) ? [...state.players] : [];
+                  const kvPlayers = update.players;
+
+                  const mergedMap = new Map();
+                  doPlayers.forEach(p => mergedMap.set(p.id || p, p));
+                  kvPlayers.forEach(p => {
+                      const pid = p.id || p;
+                      if (!mergedMap.has(pid)) mergedMap.set(pid, p);
+                  });
+
+                  const mergedPlayers = Array.from(mergedMap.values()).filter(p => activePlayerIds.has(p.id || p));
+                  const beforeCount = state.players?.length || 0;
+                  state.players = mergedPlayers;
+                  const removedCount = beforeCount - state.players.length;
+                  if (removedCount > 0) {
+                      console.log(`[new_game] 시간제: 이탈자/비활성 제거 ${beforeCount}명 → ${state.players.length}명`);
                   }
+                  console.log(`[new_game] 시간제: players 초기화(병합 후 활성 필터) ${state.players.length}명`);
               } else {
                   // KV에 players가 없으면 빈 배열
                   state.players = [];
@@ -1208,6 +1204,26 @@ async function handleJoinRoom(request, env) {
       });
       
       console.log(`[join-room] 🔍 KV 업데이트 완료: playerCount=${roomData.players.length}명`);
+
+      // 🚀 턴제: 새 플레이어를 DO에도 즉시 동기화 (게임 중/대기실 공통)
+      if (roomData.gameMode === 'turn' && env.GAME_STATE) {
+          try {
+              const id = env.GAME_STATE.idFromName(roomId);
+              const stub = env.GAME_STATE.get(id);
+              const syncRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      action: 'sync_players',
+                      players: roomData.players
+                  })
+              });
+              await stub.fetch(syncRequest);
+              console.log(`[join-room] 🔍 턴제 새 플레이어 DO 동기화 완료 (${roomData.players.length}명)`);
+          } catch (e) {
+              console.error('[join-room] 턴제 새 플레이어 DO 동기화 실패 (무시):', e);
+          }
+      }
   } else {
       // 🔍 디버깅: 기존 플레이어 업데이트 시 상세 로그
       console.log(`[join-room] 🔍 기존 플레이어 업데이트: roomId=${roomId}, playerId=${playerId}, gameMode=${roomData.gameMode}, gameStarted=${roomData.gameStarted}, endTime=${roomData.endTime || '없음'}, players=${roomData.players.length}명`, 
