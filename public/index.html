@@ -6049,11 +6049,10 @@
                         const previousWordsCount = multiplayerState.lastUsedWordsCount || 0;
                         const currentWordsCount = roomData.usedWords.length;
                         
-                        // 🆕 상대방이 단어를 맞췄는지 감지 (단어 수가 증가했고, 자신이 방금 입력하지 않았을 때)
+                        // 🎵 누군가 단어를 맞췄는지 감지 (단어 수가 증가했을 때) - 모든 플레이어에게 효과음 공유
                         if (currentWordsCount > previousWordsCount && 
-                            roomData.currentTurnPlayerId !== multiplayerState.playerId &&
-                            !multiplayerState.justSubmittedWord) { // 🆕 자신이 방금 입력한 경우 제외
-                            // 상대방이 단어를 맞춤 - 효과음 재생
+                            !multiplayerState.justSubmittedWord) { // 🆕 자신이 방금 입력한 경우 제외 (중복 방지)
+                            // 누군가 단어를 맞춤 - 효과음 재생 (모든 플레이어에게 들림)
                             const newWord = roomData.usedWords[currentWordsCount - 1];
                             if (newWord) {
                                 // 마지막 단어의 길이로 생명권 획득 여부 추정
