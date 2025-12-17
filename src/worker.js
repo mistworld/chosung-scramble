@@ -1740,9 +1740,15 @@ async function handleGameState(request, env) {
   if (request.method === 'POST' && updateBody && (updateBody.action === 'start_game' || updateBody.action === 'new_game')) {
       try {
           const roomData = await env.ROOM_LIST.get(roomId, 'json');
-          if (roomData && roomData.players && roomData.players.length > 0) {
-              // KV의 players를 updateBody에 추가 (DO에서 사용)
-              updateBody.players = roomData.players;
+          if (roomData) {
+              // 이미 클라이언트가 전달한 players가 있으면 존중 (필터된 활성 목록)
+              // 없거나 비어 있으면 KV의 players로 보강
+              if (!updateBody.players || updateBody.players.length === 0) {
+                  if (roomData.players && roomData.players.length > 0) {
+                      updateBody.players = roomData.players;
+                  }
+              }
+
               // request body 업데이트
               request = new Request(request.url, {
                   method: 'POST',
