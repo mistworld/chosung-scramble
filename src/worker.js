@@ -319,12 +319,22 @@ export class GameStateRoom {
           
           if (isValid) {
               const wordLower = word.toLowerCase();
-              if (state.usedWords.includes(wordLower)) {
+              
+              // 🚀 중복 체크: usedWords가 문자열 배열인지 객체 배열인지 확인
+              const isDuplicate = state.usedWords.some(w => 
+                  (typeof w === 'string' ? w : w.word) === wordLower
+              );
+              if (isDuplicate) {
                   console.log(`[턴제] 중복 단어: ${wordLower}`);
                   return state;
               }
               
-              state.usedWords.push(wordLower);
+              // 🎵 효과음 공유를 위해 특별초성 정보 포함
+              state.usedWords.push({
+                  word: wordLower,
+                  length: wordLength,
+                  hasSpecial: hasSpecialConsonant
+              });
               
               if (!state.turnCount[playerId]) state.turnCount[playerId] = 0;
               state.turnCount[playerId] += 1;

@@ -5478,30 +5478,40 @@
                 // 🆕 입장 시 즉시 슬롯 표시 (폴링 시작 전에도)
                 updateScoreboard(roomData);
                 
-                // 🎯 종료 모달 뜬 상태에서 입장한 경우: 버튼 및 채팅 설정
-                if (roomData.endTime && !roomData.gameStarted) {
-                    console.log('[입장] 종료 모달 뜬 대기실 입장 - 버튼 및 채팅 설정');
+                // 🎯 종료 모달 뜬 상태에서 입장한 경우: 게임 시작 대기실 UI
+                // roundNumber > 0 = 게임이 한 번이라도 진행됨 (처음 방 만들 때와 구분)
+                if (roomData.endTime && !roomData.gameStarted && roomData.roundNumber > 0) {
+                    console.log('[입장] 종료 모달 뜬 대기실 입장 - 게임 시작 대기 UI');
                     
                     // 채팅창 표시
                     document.getElementById('chatContainer')?.classList.remove('hidden');
                     
                     // 버튼 텍스트 및 기능 변경 (약간의 지연을 두어 DOM 렌더링 후 실행)
                     setTimeout(() => {
-                        const soloBtn = document.querySelector('.mode-start-btn.solo');
-                        const multiBtn = document.querySelector('.mode-start-btn.together');
+                        const buttonsContainer = document.querySelector('.mode-buttons');
+                        if (!buttonsContainer) return;
                         
-                        if (soloBtn) {
-                            soloBtn.textContent = '⏸️ 대기하기';
-                            soloBtn.onclick = null; // 클릭 무효화
-                            soloBtn.style.opacity = '0.5';
-                            soloBtn.style.cursor = 'default';
-                        }
+                        // 🎯 방장 여부 확인
+                        const isHost = roomData.players && roomData.players.length > 0 && 
+                                     roomData.players[0].id === multiplayerState.playerId;
                         
-                        if (multiBtn) {
-                            multiBtn.textContent = '🚪 나가기';
-                            multiBtn.onclick = () => {
-                                leaveRoom();
-                            };
+                        if (isHost) {
+                            // 방장: 게임 시작 + 나가기
+                            buttonsContainer.innerHTML = `
+                                <button class="mode-start-btn solo" onclick="sendGameStart(true)">
+                                    🎮 게임 시작
+                                </button>
+                                <button class="mode-start-btn together" onclick="leaveRoom()">
+                                    🚪 나가기
+                                </button>
+                            `;
+                        } else {
+                            // 비방장: 나가기만 (중앙 정렬)
+                            buttonsContainer.innerHTML = `
+                                <button class="mode-start-btn together" onclick="leaveRoom()" style="margin: 0 auto;">
+                                    🚪 나가기
+                                </button>
+                            `;
                         }
                     }, 100);
                 }
@@ -6083,20 +6093,21 @@
                             // 누군가 단어를 맞춤 - 효과음 재생 (모든 플레이어에게 들림)
                             const newWord = roomData.usedWords[currentWordsCount - 1];
                             if (newWord) {
-                                // 마지막 단어의 길이로 생명권 획득 여부 추정
-                                const wordLength = newWord.length;
-                                // 특별초성 체크는 어렵지만, 단어 길이로 대략 추정
+                                // 🎵 서버에서 전달된 특별초성 정보 사용 (정확한 효과음)
+                                const wordLength = typeof newWord === 'string' ? newWord.length : newWord.length;
+                                const hasSpecial = typeof newWord === 'object' ? newWord.hasSpecial : false;
+                                
                                 let livesEarned = 0;
-                                if (wordLength === 2) {
-                                    // 2글자는 특별초성 여부를 알 수 없으므로 생명권 획득 가능성 있음
-                                    // 하지만 일반 2글자는 0개이므로, 일단 30.mp3 재생
-                                    livesEarned = 0;
+                                if (wordLength === 2 && hasSpecial) {
+                                    livesEarned = 1; // 특별초성 2글자 ❤️
+                                } else if (wordLength === 2) {
+                                    livesEarned = 0; // 일반 2글자
                                 } else if (wordLength === 3) {
-                                    livesEarned = 1;
+                                    livesEarned = 1; // 3글자 ❤️
                                 } else if (wordLength === 4) {
-                                    livesEarned = 3;
+                                    livesEarned = 3; // 4글자 ❤️❤️❤️
                                 } else if (wordLength >= 5) {
-                                    livesEarned = 5;
+                                    livesEarned = 5; // 5글자+ ❤️❤️❤️❤️❤️
                                 }
                                 
                                 // 🎵 효과음 재생 (생명권 개수에 따라 정확한 사운드)
@@ -7743,8 +7754,10 @@
             const reversedWords = [...usedWords].reverse();
             const lastWord = reversedWords[0]; // 가장 최근 단어
             
-            usedWordsEl.innerHTML = reversedWords.map((word, index) => {
+            usedWordsEl.innerHTML = reversedWords.map((wordData, index) => {
                 const isRecent = index === 0; // 가장 최근 단어
+                // 🎵 호환성: 문자열 또는 객체 모두 처리
+                const word = typeof wordData === 'string' ? wordData : wordData.word;
                 return `<span class="word-item ${isRecent ? 'recent' : ''}">${word}</span>`;
             }).join('');
             
