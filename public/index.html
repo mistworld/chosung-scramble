@@ -4122,10 +4122,16 @@
                 if (multiplayerState.isMultiplayer && multiplayerState.gameMode === 'turn') {
                     // 중복 단어 체크 (클라이언트 측)
                     const wordLower = wordForGame.toLowerCase();
-                    if (multiplayerState.usedWords && multiplayerState.usedWords.includes(wordLower)) {
+                    // 🚀 수정: usedWords가 객체 배열이므로 .word로 비교
+                    const isDuplicate = multiplayerState.usedWords && multiplayerState.usedWords.some(w => {
+                        const wordStr = typeof w === 'string' ? w : w.word;
+                        return wordStr === wordLower;
+                    });
+                    
+                    if (isDuplicate) {
                         // 중복 단어 처리: 단어 뜻 영역에 메시지 표시
                         updateDefinition('이미 나왔던 단어입니다');
-                        
+
                         // 토스트 메시지 (턴제 모드: PC에서는 showTurnModeToast, 모바일에서만 showToast)
                         if (gameState.isMobile && !isPC()) {
                             showToast('😓', '이미 나왔던 단어입니다', 0);
@@ -5479,10 +5485,9 @@
                 // 🆕 입장 시 즉시 슬롯 표시 (폴링 시작 전에도)
                 updateScoreboard(roomData);
                 
-                // 🎯 종료 모달 뜬 상태에서 입장한 경우: 게임 시작 대기실 UI
-                // roundNumber > 0 = 게임이 한 번이라도 진행됨 (처음 방 만들 때와 구분)
-                if (roomData.endTime && !roomData.gameStarted && roomData.roundNumber > 0) {
-                    console.log('[입장] 종료 모달 뜬 대기실 입장 - 게임 시작 대기 UI');
+                // 🎯 턴제 방 입장 시 항상 게임 시작 대기실 UI (처음 방 + 종료 모달 모두)
+                if (roomData.gameMode === 'turn') {
+                    console.log('[입장] 턴제 방 입장 - 게임 시작 대기 UI');
                     
                     // 채팅창 표시
                     document.getElementById('chatContainer')?.classList.remove('hidden');
