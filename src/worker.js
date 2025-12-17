@@ -1083,48 +1083,7 @@ async function handleJoinRoom(request, env) {
       return jsonResponse({ error: 'Room is closed', message: '방이 삭제되었습니다' }, 404);
   }
   
-  // 🚀 시간제: TTL 체크 (비활성 방 차단)
-  if (roomData.gameMode === 'time') {
-      const now = Date.now();
-      const lastActivity = roomData.lastActivity || roomData.createdAt;
-      const INACTIVE_TIMEOUT = 5 * 60 * 1000; // 5분
-      
-      if (lastActivity && (now - lastActivity) > INACTIVE_TIMEOUT) {
-          console.log(`[join-room] 시간제 방 ${roomId} 비활성 (${Math.floor((now - lastActivity) / 1000)}초), 삭제 및 차단`);
-          // 비활성 방 즉시 삭제
-          await env.ROOM_LIST.delete(roomId);
-          return jsonResponse({ error: 'Room is closed', message: '방이 만료되었습니다' }, 404);
-      }
-  }
-  
-  // 🚀 턴제: DO에서 실제 플레이어 수 확인 (유령 방 입장 차단)
-  if (roomData.gameMode === 'turn' && env.GAME_STATE) {
-      try {
-          const id = env.GAME_STATE.idFromName(roomId);
-          const stub = env.GAME_STATE.get(id);
-          const doRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
-              method: 'GET'
-          });
-          const doResponse = await stub.fetch(doRequest);
-          if (doResponse.ok) {
-              const doState = await doResponse.json();
-              if (!doState.players || doState.players.length === 0) {
-                  console.log(`[join-room] 턴제 방 ${roomId} DO에 플레이어 없음, 삭제 및 차단`);
-                  // 빈 방 즉시 삭제
-                  await env.ROOM_LIST.delete(roomId);
-                  return jsonResponse({ error: 'Room is closed', message: '방이 비어있습니다' }, 404);
-              }
-          } else {
-              // 🚀 DO 응답 실패 시 보수적 차단
-              console.log(`[join-room] 턴제 방 ${roomId} DO 응답 실패, 입장 차단`);
-              return jsonResponse({ error: 'Room unavailable', message: '방 상태를 확인할 수 없습니다' }, 503);
-          }
-      } catch (e) {
-          // 🚀 DO 확인 실패 시 보수적 차단 (KV 통과 안 함)
-          console.error('[join-room] DO 확인 실패, 입장 차단:', e);
-          return jsonResponse({ error: 'Room unavailable', message: '방 상태를 확인할 수 없습니다' }, 503);
-      }
-  }
+  // 🚀 제거: TTL/DO 체크가 입장을 막고 있어서 임시로 제거
 
   // 🚀 시간제 모드: 블랙리스트 제거 (입퇴장 완전 자유)
   // 🚀 재입장은 항상 가능하므로 players.length 체크 제거
