@@ -7725,16 +7725,16 @@
             // 이름 변경 버튼 표시/숨김 처리
             const changeNameContainer = document.getElementById('changeNameContainer');
             if (changeNameContainer) {
-                // 방 입장 전에만 표시
-                if (multiplayerState.isMultiplayer && multiplayerState.roomId) {
+                // 방에 들어간 상태(roomId 존재)면 숨김
+                if (multiplayerState.roomId) {
                     changeNameContainer.style.display = 'none';
                 } else {
                     changeNameContainer.style.display = 'flex';
                 }
             }
             
-            // 멀티플레이 중이면 (시간제/턴제 공통): 중앙 영역에 대기실 채팅 입력창 표시
-            if (multiplayerState.isMultiplayer && multiplayerState.roomId) {
+            // 멀티플레이 중이면 (roomId 존재 시): 중앙 영역에 대기실 채팅 입력창 표시
+            if (multiplayerState.roomId) {
                 const mpWaitingChat = document.getElementById('mpWaitingChat');
                 if (mpWaitingChat) {
                     // 채팅 메시지 영역은 숨기고, 입력창만 유지 (메시지는 오른쪽 채팅 영역에만 표시)
