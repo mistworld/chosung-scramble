@@ -163,7 +163,7 @@ export class GameStateRoom {
               state.turnCount = {};
               state.isFirstTurn = true;
               
-              // 🚀 새 라운드 시작 시 players 초기화 (DO+KV 병합 후 활성 필터)
+              // 🚀 새 라운드 시작 시 players 초기화 (DO+KV 병합 후 활성 필터 + lastSeen TTL)
               if (Array.isArray(update.players) && update.players.length > 0) {
                   const activeIds = new Set(update.players.map(p => p.id || p));
                   const doPlayers = Array.isArray(state.players) ? [...state.players] : [];
@@ -174,6 +174,17 @@ export class GameStateRoom {
                       if (!merged.has(pid)) merged.set(pid, p);
                   });
                   let mergedPlayers = Array.from(merged.values()).filter(p => activeIds.has(p.id || p));
+
+                  // lastSeen 기반 추가 필터 (폴링 끊긴 유저 제거)
+                  if (update.lastSeen && typeof update.lastSeen === 'object') {
+                      const TTL = 60 * 1000;
+                      const nowTs = Date.now();
+                      mergedPlayers = mergedPlayers.filter(p => {
+                          const pid = p.id || p;
+                          const last = update.lastSeen[pid];
+                          return typeof last === 'number' && (nowTs - last) <= TTL;
+                      });
+                  }
 
                   // 탈락자 제외
                   const eliminatedSet = new Set(state.eliminatedPlayers || []);
@@ -186,7 +197,7 @@ export class GameStateRoom {
                       console.log(`[start_game] 🔍 병합/필터 후 제거: ${before} → ${state.players.length}`);
                   }
               } else {
-                  // 클라이언트 players가 없으면 기존 DO players만 사용하되 탈락자 필터
+                  // 클라이언트 players가 없으면 기존 DO players만 사용하되 lastSeen/탈락자 필터
                   if (!state.players) state.players = [];
                   const eliminatedSet = new Set(state.eliminatedPlayers || []);
                   state.players = state.players.filter(p => !eliminatedSet.has(p.id || p));
@@ -265,7 +276,20 @@ export class GameStateRoom {
                   }
                   console.log(`[new_game] 🔍 players 초기화(턴제, 병합 후 활성 필터): ${state.players.length}명`, state.players.map(p => (p.id || p)));
 
-              // 턴제는 lastSeen 필터 미적용 (정상 접속자 오인 제거)
+              // 🆕 lastSeen 기반 추가 필터링 (폴링 끊긴 플레이어 제거)
+              if (update.lastSeen && typeof update.lastSeen === 'object') {
+                  const nowTs = Date.now();
+                  const TTL = 60 * 1000; // 60초 이내 폴링만 인정
+                  const filtered = state.players.filter(p => {
+                      const pid = p.id || p;
+                      const last = update.lastSeen[pid];
+                      return typeof last === 'number' && (nowTs - last) <= TTL;
+                  });
+                  if (filtered.length !== state.players.length) {
+                      console.log(`[new_game] 🔍 lastSeen 필터 적용: ${state.players.length}명 → ${filtered.length}명 (TTL ${TTL}ms)`);
+                      state.players = filtered;
+                  }
+              }
               } else {
                   // KV에 players가 없으면 빈 배열
                   state.players = [];
@@ -403,15 +427,12 @@ export class GameStateRoom {
       if (update.action === 'turn_timeout' && state.gameMode === 'turn') {
           const { playerId } = update;
           if (playerId === state.currentTurnPlayerId) {
-              if (state.playerLives[playerId] === undefined || state.playerLives[playerId] === null) {
-                  state.playerLives[playerId] = 0;
-              }
+              if (!state.playerLives[playerId]) state.playerLives[playerId] = 0;
               state.playerLives[playerId] -= 1;
-              if (state.playerLives[playerId] < 0) state.playerLives[playerId] = 0; // 음수로 급락 방지
               
               console.log(`[턴제] ${playerId} 시간 초과. 연장권 -1, 현재: ${state.playerLives[playerId]}`);
               
-              if (state.playerLives[playerId] <= -1) {
+              if (state.playerLives[playerId] < 0) {
                   if (!state.eliminatedPlayers.includes(playerId)) {
                       state.eliminatedPlayers.push(playerId);
                       console.log(`[턴제] ${playerId} 탈락!`);
@@ -1577,9 +1598,24 @@ async function handleGameState(request, env) {
       const originalDoPlayers = doState.players ? [...doState.players] : null; // 🚀 원본 DO players 백업 (로그용)
       
       if (doState.gameMode === 'turn') {
-          // 🚀 턴제 모드: DO 우선 (lastSeen 필터 미적용)
+          // 🚀 턴제 모드: DO 우선 + lastSeen TTL 필터 (폴링 끊긴 유저 제거)
+          const TTL = 60 * 1000;
+          const nowTs = Date.now();
+          
           if (doState.players && Array.isArray(doState.players)) {
-              const filtered = doState.players;
+              let filtered = doState.players;
+              
+              if (roomData.lastSeen && typeof roomData.lastSeen === 'object') {
+                  filtered = filtered.filter(p => {
+                      const pid = p.id || p;
+                      const last = roomData.lastSeen[pid];
+                      return typeof last === 'number' && (nowTs - last) <= TTL;
+                  });
+                  if (filtered.length !== doState.players.length) {
+                      console.log(`[game-state] 턴제 - lastSeen 필터 적용: DO ${doState.players.length} → ${filtered.length}`);
+                  }
+              }
+              
               finalPlayers = filtered;
               console.log(`[game-state] 턴제 - DO players 사용: ${finalPlayers.length}명`, finalPlayers.map(p => ({ id: (p.id || p), name: (p.name || '이름없음') })));
               
@@ -1767,6 +1803,10 @@ async function handleGameState(request, env) {
                   if (roomData.players && roomData.players.length > 0) {
                       updateBody.players = roomData.players;
                   }
+              }
+              // 🆕 lastSeen을 함께 전달하여 서버에서 비활성(폴링 끊긴) 플레이어를 필터링
+              if (roomData.lastSeen) {
+                  updateBody.lastSeen = roomData.lastSeen;
               }
 
               // request body 업데이트
