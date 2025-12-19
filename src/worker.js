@@ -955,12 +955,8 @@ async function handleRooms(env) {
               if ((now - createdAt) >= ONE_HOUR) {
                   continue;
               }
-              if (playerCount <= 0) { // 0명 이하면 유효하지 않은 방이므로 목록에서 제외
-                  console.log(`[rooms] 비활성/빈 방 ${roomId} 삭제 (playerCount=${playerCount})`);
-                  env.ROOM_LIST.delete(roomId).catch(e => {
-                      console.error(`[rooms] 비활성/빈 방 삭제 실패 ${roomId}:`, e);
-                  });
-                  continue; // 목록에 추가하지 않고 다음 방으로
+              if (playerCount <= 0) {
+                  continue;
               }
               if (seenIds.has(roomId)) {
                   continue;
@@ -1059,7 +1055,7 @@ async function handleRooms(env) {
       return new Response(JSON.stringify({ error: error.message }), {
           status: 500,
           headers: { 
-              'Content-Type': 'application/json', 
+              'Content-Type': 'application/json',
               ...corsHeadersWithCache 
           }
       });
@@ -1178,25 +1174,6 @@ async function handleJoinRoom(request, env) {
   // 🚀 파기된 방 체크 (players가 비어있으면 입장 불가)
   if (!roomData.players || roomData.players.length === 0) {
       return jsonResponse({ error: 'Room is closed', message: '방이 삭제되었습니다' }, 404);
-  }
-
-  // 🚀 턴제: DO에서 실제 플레이어 수 확인 (유령 방 입장 차단 핵심!)
-  if (roomData.gameMode === 'turn' && env.GAME_STATE) {
-      try {
-          const id = env.GAME_STATE.idFromName(roomId);
-          const stub = env.GAME_STATE.get(id);
-          const doRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, { method: 'GET' });
-          const doResponse = await stub.fetch(doRequest);
-          if (doResponse.ok) {
-              const doState = await doResponse.json();
-              if (!doState.players || doState.players.length === 0) {
-                  console.log(`[join-room] 턴제 방 ${roomId} DO에 플레이어 없음, 입장 차단`);
-                  return jsonResponse({ error: 'Room is closed', message: '방이 비어있습니다' }, 404);
-              }
-          }
-      } catch (e) {
-          console.error('[join-room] DO 확인 실패 (KV 기준으로 진행):', e);
-      }
   }
 
   // 🚀 시간제: 비활성 TTL 초과 시 즉시 차단 및 삭제 (sendBeacon 실패 대비)
@@ -1398,20 +1375,18 @@ async function handleLeaveRoom(request, env) {
   if (!roomData) {
       return jsonResponse({ error: 'Room not found' }, 404);
   }
-
-  // 🚀 수정: KV의 roomData.players를 미리 필터링하지 않고, DO의 최종 결과에 따르도록 변경
-  // DO가 방장 승계 및 플레이어/점수/단어 관리를 처리하므로, handleLeaveRoom에서는 KV의 해당 필드를 직접 수정하지 않음.
-  // 시간제 모드만 KV에서 직접 처리하도록 아래에서 분기 처리.
-
-  let doResponseOk = false; // DO의 remove_player 처리가 성공했는지 여부
-  let finalRemainingPlayers = 0; // 최종 남은 플레이어 수
-  let finalNewHostId = null; // 최종 새 방장 ID
-
-  // 🚀 턴제 모드 처리
+  const wasHost = roomData.players.length > 0 && roomData.players[0].id === playerId;
+  let newHostId = null;
+  roomData.players = roomData.players.filter(p => p.id !== playerId);
+  if (roomData.scores) delete roomData.scores[playerId];
+  if (roomData.playerWords) delete roomData.playerWords[playerId];
+  
+  // 🚀 턴제 모드: 대기실/게임 중 모두 DO에서 제거 (슬롯 동기화 보장)
   if (roomData.gameMode === 'turn' && env.GAME_STATE) {
       try {
           const id = env.GAME_STATE.idFromName(roomId);
           const stub = env.GAME_STATE.get(id);
+          // 🆕 정상 나가기는 remove_player 액션 사용 (게임 중/대기실 모두 처리)
           const removeRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -1420,101 +1395,69 @@ async function handleLeaveRoom(request, env) {
                   playerId: playerId
               })
           });
+          // 🚀 remove_player 액션 완료 대기 (persistState 완료 보장)
           const removeResponse = await stub.fetch(removeRequest);
           if (removeResponse.ok) {
-              doResponseOk = true;
               const removeResult = await removeResponse.json();
               console.log(`[leave-room] 턴제 모드 퇴장: DO에서 ${playerId} 제거 완료`, removeResult?.players?.length || 0, '명 남음');
-
-              // DO 처리가 성공했다면, KV는 DO로부터 이미 최신화되었을 가능성이 높음.
-              // 하지만 혹시 모를 상황에 대비하여 KV에서 다시 최신 roomData를 가져와 판단
-              const latestRoomData = await env.ROOM_LIST.get(roomId, 'json');
-              const currentPlayersInKV = latestRoomData?.players || [];
-              finalRemainingPlayers = currentPlayersInKV.length;
-              finalNewHostId = latestRoomData?.hostId || null;
               
-              const shouldDeleteTurnRoom = currentPlayersInKV.length <= 1; 
-              
-              if (shouldDeleteTurnRoom) { // 턴제 모드에서 방 삭제가 필요한 경우
-                  try {
-                      await env.ROOM_LIST.delete(roomId);
-                      try {
-                          const recentRooms = await env.ROOM_LIST.get('_recent_rooms', 'json') || [];
-                          const filtered = recentRooms.filter(r => r.roomId !== roomId);
-                          if (filtered.length !== recentRooms.length) {
-                              await env.ROOM_LIST.put('_recent_rooms', JSON.stringify(filtered));
-                          }
-                      } catch (e) {
-                          console.error('[leave-room] recent_rooms 정리 실패 (무시):', e);
-                      }
-                  } catch (e) {
-                      console.error('[leave-room] 마지막 플레이어 퇴장 시 방 삭제 실패 (턴제):', e);
-                      // 🚀 수정: 삭제 실패 시 `put` 하지 않음. `handleRooms`의 주기적 청소에 의존.
+              // 🚀 remove_player 응답에서 바로 players 가져오기 (가장 최신 상태)
+              if (removeResult && removeResult.players) {
+                  const doPlayerIds = removeResult.players.map(p => p.id || p);
+                  const kvPlayers = roomData.players.filter(p => doPlayerIds.includes(p.id));
+                  const orderedPlayers = doPlayerIds.map(pid => 
+                      kvPlayers.find(p => p.id === pid) || 
+                      removeResult.players.find(p => (p.id || p) === pid)
+                  ).filter(Boolean);
+                  
+                  // 🚀 DO의 players를 KV에 즉시 반영
+                  roomData.players = orderedPlayers;
+                  console.log(`[leave-room] KV players 즉시 동기화 (${orderedPlayers.length}명, DO 기준)`, orderedPlayers.map(p => ({ id: p.id, name: p.name })));
+                  
+                  // 방장 승계 확인
+                  if (removeResult.hostPlayerId && removeResult.hostPlayerId !== roomData.hostId) {
+                      roomData.hostId = removeResult.hostPlayerId;
+                      console.log(`[leave-room] KV 방장 승계 동기화: ${removeResult.hostPlayerId}`);
                   }
-              } else { // 🚀 수정: 턴제 모드에서 방이 삭제되지 않는 경우 KV 업데이트
-                  await env.ROOM_LIST.put(roomId, JSON.stringify(latestRoomData), { // 🚀 latestRoomData 사용
-                      metadata: {
-                          id: roomId,
-                          roomNumber: latestRoomData.roomNumber || 0,
-                          createdAt: latestRoomData.createdAt,
-                          playerCount: currentPlayersInKV.length, // DO로부터 가져온 최신 KV 상태 반영
-                          gameStarted: latestRoomData.gameStarted || false,
-                          roundNumber: latestRoomData.roundNumber || 0,
-                          title: latestRoomData.title || '초성 배틀방',
-                          gameMode: latestRoomData.gameMode || 'turn' // 턴제 모드
-                      }
-                  });
               }
           }
       } catch (e) {
-          console.error(`[leave-room] 턴제 모드: DO에서 플레이어 ${playerId} 제거 실패 (예외 발생):`, e);
-          // doResponseOk는 false. KV 업데이트를 시도하지 않음.
+          console.error('[leave-room] DO에서 플레이어 제거 실패 (무시):', e);
       }
-  } 
-  // 🚀 시간제 모드 처리 (DO를 사용하지 않음)
-  else if (roomData.gameMode === 'time') { 
-      const wasHostTime = roomData.players.length > 0 && roomData.players[0].id === playerId;
-      roomData.players = roomData.players.filter(p => p.id !== playerId); // 시간제는 KV에서 직접 플레이어 제거
-      if (roomData.scores) delete roomData.scores[playerId];
-      if (roomData.playerWords) delete roomData.playerWords[playerId];
-      
-      if (wasHostTime && roomData.players.length > 0) {
-          roomData.hostId = roomData.players[0].id;
-          console.log(`[leave-room] 방장 승계: ${roomData.hostId}가 새 방장이 됨 (시간제 모드)`);
-      }
-      finalRemainingPlayers = roomData.players.length;
-      finalNewHostId = roomData.hostId || null;
-
-      // 🚀 시간제: 모든 플레이어가 나가면 방 삭제
-      const shouldDeleteTimeRoom = roomData.players.length === 0;
-      if (shouldDeleteTimeRoom) {
+  }
+  
+  // 🚀 턴제 모드가 아니거나 턴제 모드에서 게임 중이 아닐 때 KV에서 직접 방장 승계 처리
+  // (턴제 모드는 위에서 DO 처리 시 방장 승계도 함께 처리됨)
+  if (roomData.gameMode !== 'turn' && wasHost && roomData.players.length > 0) {
+      newHostId = roomData.players[0].id;
+      roomData.hostId = newHostId;
+      console.log(`[leave-room] 방장 승계: ${newHostId}가 새 방장이 됨 (시간제 모드)`);
+  }
+  
+  // 🚀 시간제: 최소 1명만 있어도 방 유지 (들락날락 가능)
+  // 🚀 방 삭제 조건
+  // 시간제: 모든 플레이어가 나가면 방 삭제
+  // 턴제: 1명만 남으면 방 삭제 (2명 이상 필요)
+  const shouldDeleteRoom = (roomData.gameMode === 'turn' && roomData.players.length <= 1) || 
+                          (roomData.gameMode === 'time' && roomData.players.length === 0);
+  
+  if (shouldDeleteRoom) {
+      try {
+          await env.ROOM_LIST.delete(roomId);
+          
+          // 🚀 블랙리스트 제거됨 (입퇴장 완전 자유)
+          
           try {
-              await env.ROOM_LIST.delete(roomId);
-              try {
-                  const recentRooms = await env.ROOM_LIST.get('_recent_rooms', 'json') || [];
-                  const filtered = recentRooms.filter(r => r.roomId !== roomId);
-                  if (filtered.length !== recentRooms.length) {
-                      await env.ROOM_LIST.put('_recent_rooms', JSON.stringify(filtered));
-                  }
-              } catch (e) {
-                  console.error('[leave-room] recent_rooms 정리 실패 (무시):', e);
+              const recentRooms = await env.ROOM_LIST.get('_recent_rooms', 'json') || [];
+              const filtered = recentRooms.filter(r => r.roomId !== roomId);
+              if (filtered.length !== recentRooms.length) {
+                  await env.ROOM_LIST.put('_recent_rooms', JSON.stringify(filtered));
               }
           } catch (e) {
-              console.error('[leave-room] 마지막 플레이어 퇴장 시 방 삭제 실패 (시간제):', e);
-              await env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
-                  metadata: {
-                      id: roomId,
-                      roomNumber: roomData.roomNumber || 0,
-                      createdAt: roomData.createdAt,
-                      playerCount: roomData.players.length,
-                      gameStarted: roomData.gameStarted || false,
-                      roundNumber: roomData.roundNumber || 0,
-                      title: roomData.title || '초성 배틀방',
-                      gameMode: roomData.gameMode || 'time'
-                  }
-              });
+              console.error('[leave-room] recent_rooms 정리 실패 (무시):', e);
           }
-      } else { // 삭제하지 않는 경우 (여전히 플레이어가 있는 경우)
+      } catch (e) {
+          console.error('[leave-room] 마지막 플레이어 퇴장 시 방 삭제 실패:', e);
           await env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
               metadata: {
                   id: roomId,
@@ -1528,12 +1471,25 @@ async function handleLeaveRoom(request, env) {
               }
           });
       }
+  } else {
+      await env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
+          metadata: {
+              id: roomId,
+              roomNumber: roomData.roomNumber || 0,
+              createdAt: roomData.createdAt,
+              playerCount: roomData.players.length,
+              gameStarted: roomData.gameStarted || false,
+              roundNumber: roomData.roundNumber || 0,
+              title: roomData.title || '초성 배틀방',
+              gameMode: roomData.gameMode || 'time'
+          }
+      });
   }
   
   return jsonResponse({ 
       success: true, 
-      remainingPlayers: finalRemainingPlayers,
-      newHostId: finalNewHostId
+      remainingPlayers: roomData.players.length,
+      newHostId: newHostId
   });
 }
 
@@ -2255,3 +2211,4 @@ export default {
         return new Response('Not Found', { status: 404 });
     }
 };
+

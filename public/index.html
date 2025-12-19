@@ -5260,26 +5260,23 @@
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({}));
 
-                    // 🚀 [추가됨] 유령 방(파기된 방) 클릭 시 처리
+                    // 🚀 유령 방(파기된 방) 클릭 시 처리
                     if (errorData.error === 'Room is closed' || response.status === 404) {
                         alert(errorData.message || '방이 이미 파기되었습니다.');
-                        // 방 목록에서 해당 방 즉시 제거
-                        if (window.activeRooms) {
-                            window.activeRooms = window.activeRooms.filter(r => r.id !== roomId);
-                            renderRoomList(window.activeRooms);
-                        }
-                        showStartScreen();
+                        showRoomList();
                         return;
                     }
-
+                    
                     // 🚀 닉네임 중복 에러 처리: 토스트 대신 모달 내부에 메시지 표시
                     if (errorData.error === 'DUPLICATE_NAME' || errorData.message) {
+                        // 모달이 이미 열려있으면 메시지만 업데이트, 아니면 모달 열기
                         const modal = document.getElementById('mpNameModal');
                         if (modal.classList.contains('hidden')) {
                             multiplayerState.pendingRoomId = roomId;
                             showNameModal();
                         }
-                        showNameModalMessage(errorData.message || '같은 이름의 플레이어가 있습니다.\n다른 이름을 사용하세요.', 'error');
+                        // 모달 내부에 에러 메시지 표시 (입력창을 가리지 않음)
+                        showNameModalMessage('같은 이름의 플레이어가 있습니다.\n다른 이름을 사용하세요.', 'error');
                         return;
                     }
                     throw new Error('방 입장 실패');
@@ -5292,7 +5289,6 @@
                 
                 // 🚀 클라이언트에서 즉시 슬롯 추가 (KV 동기화 지연 보완)
                 multiplayerState.players = data.roomData?.players || [];
-                
                 if (!multiplayerState.players.find(p => p.id === multiplayerState.playerId)) {
                     multiplayerState.players.push({
                         id: multiplayerState.playerId,
@@ -5536,9 +5532,6 @@
                     setTimeout(() => {
                         const buttonsContainer = document.querySelector('.mode-buttons');
                         if (!buttonsContainer) return;
-                        
-                        // mainMenu 숨기기 (혼자하기/함께하기 버튼 숨김)
-                        document.getElementById('mainMenu')?.classList.add('hidden');
                         
                         // 🎯 방장 여부 확인
                         const isHost = roomData.players && roomData.players.length > 0 && 
@@ -6908,26 +6901,39 @@
         async function sendGameStart(isNewRound = false) {
             if (!multiplayerState.isMultiplayer || !multiplayerState.roomId) return;
             try {
-                // 🚀 서버에서 현재 플레이어 목록 가져오기
+                // 🚀 안전장치 1단계: 서버에서 현재 플레이어 목록 가져오기
                 const currentRoomData = await fetch(`https://steep-moon-7816.sucksuck1114.workers.dev/api/game-state?roomId=${multiplayerState.roomId}`, {
                     cache: 'no-cache'
                 }).then(r => r.json()).catch(() => null);
 
-                // 🚀 서버 players를 그대로 사용 (교차 검증 제거)
-                // 서버(DO)가 단일 소스이므로 서버 데이터를 신뢰
-                let activePlayers = [];
-                if (currentRoomData && currentRoomData.players && currentRoomData.players.length > 0) {
-                    activePlayers = currentRoomData.players;
-                    console.log(`🔍 [게임시작] 서버 players 사용: ${activePlayers.length}명`, activePlayers.map(p => p.name));
-                } else {
-                    // 폴백: 서버 응답 없으면 클라이언트 상태 사용
-                    activePlayers = multiplayerState.players || [];
-                    console.log(`🔍 [게임시작] 폴백 - 클라이언트 players 사용: ${activePlayers.length}명`);
+                let activePlayers = multiplayerState.players || [];
+                
+                if (currentRoomData && currentRoomData.players) {
+                    // 🚀 안전장치 2단계: 서버 응답과 클라이언트 폴링 상태를 교차 검증
+                    // 서버에 있고 + 클라이언트 폴링 중인 플레이어만 활성으로 판단
+                    const pollingPlayerIds = new Set((multiplayerState.players || []).map(p => p.id));
+                    activePlayers = currentRoomData.players.filter(p => {
+                        // 폴링 중인 플레이어만 포함 (브라우저 종료한 사람 제외)
+                        return pollingPlayerIds.has(p.id);
+                    });
+                    
+                    // 폴링 중이지만 서버에 없는 플레이어 추가 (방금 입장한 사람)
+                    const serverPlayerIds = new Set(currentRoomData.players.map(p => p.id));
+                    (multiplayerState.players || []).forEach(p => {
+                        if (!serverPlayerIds.has(p.id)) {
+                            activePlayers.push(p);
+                        }
+                    });
+                    
+                    multiplayerState.players = activePlayers;
+                    console.log(`🔍 [안전장치] 활성 플레이어: ${activePlayers.length}명`, activePlayers.map(p => p.name));
+                    console.log(`🔍 [안전장치] 서버: ${currentRoomData.players.length}명, 폴링: ${pollingPlayerIds.size}명`);
                 }
                 
                 const action = isNewRound ? 'new_game' : 'start_game';
                 console.log(`🎯 [방장] ${action} 신호 전송:`, gameState.currentConsonants);
 
+                // 🆕 활성 플레이어만 전송
                 const players = activePlayers;
 
                 const requestBody = {
