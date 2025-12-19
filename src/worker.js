@@ -1384,13 +1384,14 @@ async function handleLeaveRoom(request, env) {
   // 시간제 모드만 KV에서 직접 처리하도록 아래에서 분기 처리.
 
   let doResponseOk = false; // DO의 remove_player 처리가 성공했는지 여부
-  
-  // 🚀 턴제 모드: 대기실/게임 중 모두 DO에서 제거 (슬롯 동기화 보장)
+  let finalRemainingPlayers = 0; // 최종 남은 플레이어 수
+  let finalNewHostId = null; // 최종 새 방장 ID
+
+  // 🚀 턴제 모드 처리
   if (roomData.gameMode === 'turn' && env.GAME_STATE) {
       try {
           const id = env.GAME_STATE.idFromName(roomId);
           const stub = env.GAME_STATE.get(id);
-          // 🆕 정상 나가기는 remove_player 액션 사용 (게임 중/대기실 모두 처리)
           const removeRequest = new Request(`http://dummy/game-state?roomId=${roomId}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -1399,27 +1400,59 @@ async function handleLeaveRoom(request, env) {
                   playerId: playerId
               })
           });
-          // 🚀 remove_player 액션 완료 대기 (persistState 완료 보장)
           const removeResponse = await stub.fetch(removeRequest);
           if (removeResponse.ok) {
+              doResponseOk = true;
               const removeResult = await removeResponse.json();
               console.log(`[leave-room] 턴제 모드 퇴장: DO에서 ${playerId} 제거 완료`, removeResult?.players?.length || 0, '명 남음');
+
+              // DO 처리가 성공했다면, KV는 DO로부터 이미 최신화되었을 가능성이 높음.
+              // 하지만 혹시 모를 상황에 대비하여 KV에서 다시 최신 roomData를 가져와 판단
+              const latestRoomData = await env.ROOM_LIST.get(roomId, 'json');
+              const currentPlayersInKV = latestRoomData?.players || [];
+              finalRemainingPlayers = currentPlayersInKV.length;
+              finalNewHostId = latestRoomData?.hostId || null;
               
-              // DO의 syncKVFromDO에서 KV 업데이트를 이미 처리했으므로,
-              // 여기서는 별도의 roomData.players 갱신 로직이 불필요함.
-              // (이전 로직은 DO의 players를 다시 KV에 반영하는 로직이었음)
-              // 🚀 방장 승계 확인 (DO가 KV를 업데이트했으므로, 여기서는 로그만 남김)
-              // if (removeResult.hostPlayerId && removeResult.hostPlayerId !== roomData.hostId) {
-              //     console.log(`[leave-room] DO 방장 승계 (KV는 DO가 업데이트함): ${removeResult.hostPlayerId}`);
-              // }
+              const shouldDeleteTurnRoom = currentPlayersInKV.length <= 1; 
+              
+              if (shouldDeleteTurnRoom) { // 턴제 모드에서 방 삭제가 필요한 경우
+                  try {
+                      await env.ROOM_LIST.delete(roomId);
+                      try {
+                          const recentRooms = await env.ROOM_LIST.get('_recent_rooms', 'json') || [];
+                          const filtered = recentRooms.filter(r => r.roomId !== roomId);
+                          if (filtered.length !== recentRooms.length) {
+                              await env.ROOM_LIST.put('_recent_rooms', JSON.stringify(filtered));
+                          }
+                      } catch (e) {
+                          console.error('[leave-room] recent_rooms 정리 실패 (무시):', e);
+                      }
+                  } catch (e) {
+                      console.error('[leave-room] 마지막 플레이어 퇴장 시 방 삭제 실패 (턴제):', e);
+                      // 🚀 수정: 삭제 실패 시 `put` 하지 않음. `handleRooms`의 주기적 청소에 의존.
+                  }
+              } else { // 🚀 수정: 턴제 모드에서 방이 삭제되지 않는 경우 KV 업데이트
+                  await env.ROOM_LIST.put(roomId, JSON.stringify(latestRoomData), { // 🚀 latestRoomData 사용
+                      metadata: {
+                          id: roomId,
+                          roomNumber: latestRoomData.roomNumber || 0,
+                          createdAt: latestRoomData.createdAt,
+                          playerCount: currentPlayersInKV.length, // DO로부터 가져온 최신 KV 상태 반영
+                          gameStarted: latestRoomData.gameStarted || false,
+                          roundNumber: latestRoomData.roundNumber || 0,
+                          title: latestRoomData.title || '초성 배틀방',
+                          gameMode: latestRoomData.gameMode || 'turn' // 턴제 모드
+                      }
+                  });
+              }
           }
       } catch (e) {
-          console.error('[leave-room] DO에서 플레이어 제거 실패 (무시):', e);
+          console.error(`[leave-room] 턴제 모드: DO에서 플레이어 ${playerId} 제거 실패 (예외 발생):`, e);
+          // doResponseOk는 false. KV 업데이트를 시도하지 않음.
       }
-  }
-  
-  // 🚀 시간제 모드: DO를 사용하지 않으므로 KV에서 직접 플레이어 제거 및 방장 승계 처리
-  if (roomData.gameMode === 'time') {
+  } 
+  // 🚀 시간제 모드 처리 (DO를 사용하지 않음)
+  else if (roomData.gameMode === 'time') { 
       const wasHostTime = roomData.players.length > 0 && roomData.players[0].id === playerId;
       roomData.players = roomData.players.filter(p => p.id !== playerId); // 시간제는 KV에서 직접 플레이어 제거
       if (roomData.scores) delete roomData.scores[playerId];
@@ -1429,54 +1462,9 @@ async function handleLeaveRoom(request, env) {
           roomData.hostId = roomData.players[0].id;
           console.log(`[leave-room] 방장 승계: ${roomData.hostId}가 새 방장이 됨 (시간제 모드)`);
       }
-  }
-  
-  // 🚀 수정: DO 처리가 성공적으로 완료된 경우에만 KV 삭제/갱신 로직 진행
-  // DO 처리가 실패한 경우 (doResponseOk === false), KV는 DO의 비동기 syncKVFromDO를 기다리거나
-  // 이미 KV에 존재했던 데이터를 유지하는 것이 더 안전함.
-  if (roomData.gameMode === 'turn' && doResponseOk) {
-      // 턴제 모드이고 DO 처리가 성공했다면, KV는 DO로부터 이미 최신화되었을 가능성이 높음.
-      // 그러나 혹시 모를 상황에 대비하여 KV에서 다시 최신 roomData를 가져와 판단.
-      const latestRoomData = await env.ROOM_LIST.get(roomId, 'json');
-      const currentPlayersInKV = latestRoomData?.players || [];
-      
-      // 턴제 방 삭제 조건: 1명 이하 남았을 때 (DO에서 이미 처리되었고 KV에 반영된 상태를 확인)
-      const shouldDeleteTurnRoom = currentPlayersInKV.length <= 1; 
-      
-      if (shouldDeleteTurnRoom) { // 방 삭제가 필요한 경우
-      try {
-          await env.ROOM_LIST.delete(roomId);
-          
-          // 🚀 블랙리스트 제거됨 (입퇴장 완전 자유)
-          
-          try {
-              const recentRooms = await env.ROOM_LIST.get('_recent_rooms', 'json') || [];
-              const filtered = recentRooms.filter(r => r.roomId !== roomId);
-              if (filtered.length !== recentRooms.length) {
-                  await env.ROOM_LIST.put('_recent_rooms', JSON.stringify(filtered));
-              }
-          } catch (e) {
-              console.error('[leave-room] recent_rooms 정리 실패 (무시):', e);
-          }
-      } catch (e) {
-          console.error('[leave-room] 마지막 플레이어 퇴장 시 방 삭제 실패 (턴제):', e);
-          // 🚀 수정: 삭제 실패 시 `put` 하지 않음. `handleRooms`의 주기적 청소에 의존.
-          //          (`put`하면 계속 유령방으로 남을 수 있음)
-      }
-  } else {
-      await env.ROOM_LIST.put(roomId, JSON.stringify(roomData), {
-          metadata: {
-              id: roomId,
-              roomNumber: roomData.roomNumber || 0,
-              createdAt: roomData.createdAt,
-              playerCount: roomData.players.length,
-              gameStarted: roomData.gameStarted || false,
-              roundNumber: roomData.roundNumber || 0,
-              title: roomData.title || '초성 배틀방',
-              gameMode: roomData.gameMode || 'time'
-          }
-      });
-  } else if (roomData.gameMode === 'time') { // 시간제 모드는 기존 로직 유지
+      finalRemainingPlayers = roomData.players.length;
+      finalNewHostId = roomData.hostId || null;
+
       // 🚀 시간제: 모든 플레이어가 나가면 방 삭제
       const shouldDeleteTimeRoom = roomData.players.length === 0;
       if (shouldDeleteTimeRoom) {
@@ -1524,9 +1512,8 @@ async function handleLeaveRoom(request, env) {
   
   return jsonResponse({ 
       success: true, 
-      // 🚀 수정: 반환하는 remainingPlayers 및 newHostId도 DO 처리 결과에 기반하도록 변경
-      remainingPlayers: (roomData.gameMode === 'turn' && doResponseOk && latestRoomData) ? currentPlayersInKV.length : roomData.players.length,
-      newHostId: (roomData.gameMode === 'turn' && doResponseOk && latestRoomData) ? latestRoomData.hostId : (roomData.hostId || null)
+      remainingPlayers: finalRemainingPlayers,
+      newHostId: finalNewHostId
   });
 }
 
