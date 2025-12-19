@@ -5260,18 +5260,26 @@
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({}));
 
-                    // 🚀 블랙리스트 제거됨 (입퇴장 완전 자유)
-                    
+                    // 🚀 [추가됨] 유령 방(파기된 방) 클릭 시 처리
+                    if (errorData.error === 'Room is closed' || response.status === 404) {
+                        alert(errorData.message || '방이 이미 파기되었습니다.');
+                        // 방 목록에서 해당 방 즉시 제거
+                        if (window.activeRooms) {
+                            window.activeRooms = window.activeRooms.filter(r => r.id !== roomId);
+                            renderRoomList(window.activeRooms);
+                        }
+                        showStartScreen();
+                        return;
+                    }
+
                     // 🚀 닉네임 중복 에러 처리: 토스트 대신 모달 내부에 메시지 표시
                     if (errorData.error === 'DUPLICATE_NAME' || errorData.message) {
-                        // 모달이 이미 열려있으면 메시지만 업데이트, 아니면 모달 열기
                         const modal = document.getElementById('mpNameModal');
                         if (modal.classList.contains('hidden')) {
                             multiplayerState.pendingRoomId = roomId;
                             showNameModal();
                         }
-                        // 모달 내부에 에러 메시지 표시 (입력창을 가리지 않음)
-                        showNameModalMessage('같은 이름의 플레이어가 있습니다.\n다른 이름을 사용하세요.', 'error');
+                        showNameModalMessage(errorData.message || '같은 이름의 플레이어가 있습니다.\n다른 이름을 사용하세요.', 'error');
                         return;
                     }
                     throw new Error('방 입장 실패');
@@ -5284,6 +5292,7 @@
                 
                 // 🚀 클라이언트에서 즉시 슬롯 추가 (KV 동기화 지연 보완)
                 multiplayerState.players = data.roomData?.players || [];
+                
                 if (!multiplayerState.players.find(p => p.id === multiplayerState.playerId)) {
                     multiplayerState.players.push({
                         id: multiplayerState.playerId,
@@ -5527,6 +5536,9 @@
                     setTimeout(() => {
                         const buttonsContainer = document.querySelector('.mode-buttons');
                         if (!buttonsContainer) return;
+                        
+                        // mainMenu 숨기기 (혼자하기/함께하기 버튼 숨김)
+                        document.getElementById('mainMenu')?.classList.add('hidden');
                         
                         // 🎯 방장 여부 확인
                         const isHost = roomData.players && roomData.players.length > 0 && 
