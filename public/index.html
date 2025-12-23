@@ -3769,7 +3769,7 @@
         <button id="turnModeLeaveBtn" class="reset-btn hidden" onclick="leaveGameRoom()" style="display: none; width: 100%; margin-top: 10px; background: #ff7675;">🚪 나가기</button>
     </div>
 
-    <audio id="tickSound" src="./sound/tick.mp3"></audio>
+    <audio id="tickSound" src="tick.mp3"></audio>
 
     <script>
         // API 기본 URL
@@ -4526,7 +4526,7 @@
             if (gameState.sfxEnabled && !gameState.finishedSoundPlaying) {
                 gameState.finishedSoundPlaying = true; // 재생 시작 플래그
                 try {
-                    const audio = new Audio('./sound/finished.mp3');
+                    const audio = new Audio('finished.mp3');
                     audio.volume = 0.5;
                     audio.onended = () => {
                         // 재생이 끝나면 즉시 플래그 리셋
@@ -4735,7 +4735,7 @@
                         bgmAudio.pause();
                         bgmAudio.currentTime = 0;
                     }
-                    bgmAudio = new Audio('./sound/turn_background.mp3');
+                    bgmAudio = new Audio('turn_background.mp3');
                     bgmAudio.loop = true;
                     bgmAudio.volume = 0.3;
                     bgmAudio.play().catch(e => {});
@@ -4743,14 +4743,14 @@
                 }
                 
                 // 시간제 모드: background.mp3와 background2.mp3 교대
-                const bgmFile = (gameState.roundCount % 2 === 1) ? './sound/background.mp3' : './sound/background2.mp3';
+                const bgmFile = (gameState.roundCount % 2 === 1) ? 'background.mp3' : 'background2.mp3';
                 if (bgmAudio) {
                     bgmAudio.pause();
                     bgmAudio.currentTime = 0;
                 }
                 bgmAudio = new Audio(bgmFile);
                 bgmAudio.loop = true;
-                bgmAudio.volume = bgmFile === './sound/background2.mp3' ? 0.4 : 0.3;
+                bgmAudio.volume = bgmFile === 'background2.mp3' ? 0.4 : 0.3;
                 bgmAudio.play().catch(e => {});
             } catch (e) {}
         }
@@ -4780,13 +4780,13 @@
                 return;
             }
             let soundFile = '';
-            if (score === 10) soundFile = './sound/10.mp3';
-            else if (score === 20) soundFile = './sound/20.mp3';
-            else if (score >= 30 && score < 100) soundFile = './sound/30.mp3';
-            else if (score >= 100 && score < 400) soundFile = './sound/100 110 120.mp3';
-            else if (score >= 400 && score < 900) soundFile = './sound/400.mp3';
-            else if (score >= 900 && score < 1500) soundFile = './sound/900.mp3';
-            else if (score >= 1500) soundFile = './sound/1500.mp3';
+            if (score === 10) soundFile = '10.mp3';
+            else if (score === 20) soundFile = '20.mp3';
+            else if (score >= 30 && score < 100) soundFile = '30.mp3';
+            else if (score >= 100 && score < 400) soundFile = '100 110 120.mp3';
+            else if (score >= 400 && score < 900) soundFile = '400.mp3';
+            else if (score >= 900 && score < 1500) soundFile = '900.mp3';
+            else if (score >= 1500) soundFile = '900.mp3';
             
             if (!soundFile) {
                 console.warn(`[소리] 점수 ${score}에 해당하는 소리 파일 없음`);
@@ -4808,7 +4808,7 @@
         function playWrongSound() {
             if (!gameState.sfxEnabled) return;
             try {
-                const audio = new Audio('./sound/wrong.mp3');
+                const audio = new Audio('wrong.mp3');
                 audio.volume = 0.5;
                 audio.play().catch(e => {});
             } catch (e) {}
@@ -4837,7 +4837,7 @@
         function playTypingSound() {
             if (!gameState.typingEnabled) return;
             try {
-                const audio = new Audio('./sound/typing.mp3');
+                const audio = new Audio('typing.mp3');
                 audio.volume = 0.2;
                 audio.play().catch(e => {});
             } catch (e) {}
@@ -4933,6 +4933,7 @@
             chatMessages: [],
             // 슬롯 관련 (이전 점수 저장)
             previousScores: {},
+            optimisticScore: null,
             // 🆕 라운드 추적
             currentRound: 0,  // 현재 참여 중인 라운드 번호
             // 🆕 현재 게임 모드 (time/turn)
@@ -5445,20 +5446,22 @@
             // 턴제 모드일 때 body에 클래스 추가
             updateGameModeUI(multiplayerState.gameMode);
 
-            // 게임이 종료된 방 체크 (대기실 상태는 허용)
-            // endTime이 있어도 gameStarted가 false이고 consonants가 없으면 대기실 상태
-            if (roomData.endTime && 
-                (roomData.gameStarted || (roomData.consonants && roomData.consonants.length > 0))) {
-                // 게임이 실제로 진행 중이거나 초성이 있는 경우만 튕김
-                console.log('[입장] ❌ 게임이 이미 종료된 방입니다 (튕김) - 조건:', {
-                    endTime: roomData.endTime,
-                    gameStarted: roomData.gameStarted,
-                    hasConsonants: !!roomData.consonants,
-                    consonantsLength: roomData.consonants?.length || 0
-                });
-                // showToast('게임이 이미 종료되었습니다'); // 제거
-                leaveRoom();
-                return;
+            // 게임이 종료된 방 체크
+            // 시간제: 종료 후에도 대기실로 입장 허용 (제3자 합류 가능)
+            // 턴제: 기존 정책 유지
+            if (roomData.endTime) {
+                if (roomData.gameMode === 'turn') {
+                    if (roomData.gameStarted || (roomData.consonants && roomData.consonants.length > 0)) {
+                        console.log('[입장] ❌ 게임이 이미 종료된 방입니다 (튕김) - 조건:', {
+                            endTime: roomData.endTime,
+                            gameStarted: roomData.gameStarted,
+                            hasConsonants: !!roomData.consonants,
+                            consonantsLength: roomData.consonants?.length || 0
+                        });
+                        leaveRoom();
+                        return;
+                    }
+                }
             }
             
             // 🚀 게임 종료 후 대기실 상태면 대기실로 입장
@@ -6086,7 +6089,7 @@
                             // 입장 효과음 재생
                             if (gameState.sfxEnabled) {
                                 try {
-                                    const enterSound = new Audio('./sound/enter.mp3');
+                                    const enterSound = new Audio('enter.mp3');
                                     enterSound.volume = 0.5;
                                     enterSound.play().catch(e => console.log('입장 소리 재생 실패:', e));
                                 } catch (e) {
@@ -6098,7 +6101,7 @@
                             // 퇴장 효과음 재생
                             if (gameState.sfxEnabled) {
                                 try {
-                                    const outSound = new Audio('./sound/out.mp3');
+                                    const outSound = new Audio('out.mp3');
                                     outSound.volume = 0.5;
                                     outSound.play().catch(e => console.log('퇴장 소리 재생 실패:', e));
                                 } catch (e) {
@@ -6237,7 +6240,7 @@
                                 // heart.mp3 재생 (모두에게 들림)
                                 if (gameState.sfxEnabled) {
                                     try {
-                                        const heartSound = new Audio('./sound/heart.mp3');
+                                        const heartSound = new Audio('heart.mp3');
                                         heartSound.volume = 0.6;
                                         heartSound.play().catch(err => console.log('[턴제] 생명권 소진 효과음 재생 실패:', err));
                                     } catch (err) {
@@ -6595,6 +6598,20 @@
                         ? Math.max(...words.map(w => w.score || 0))
                         : 0;
                     const rankText = `${i + 1}위`;
+
+                    const rawScore = scores[player.id] || 0;
+                    let displayScore = rawScore;
+                    const opt = multiplayerState.optimisticScore;
+                    if (opt && opt.playerId === player.id) {
+                        const age = Date.now() - (opt.at || 0);
+                        if (age < 2000 && rawScore < opt.score) {
+                            displayScore = opt.score;
+                        } else if (rawScore >= opt.score) {
+                            multiplayerState.optimisticScore = null;
+                        } else if (age >= 2000) {
+                            multiplayerState.optimisticScore = null;
+                        }
+                    }
                     
                     html += `
                         <div class="player-slot" data-player-id="${player.id}">
@@ -6605,7 +6622,7 @@
                             <div class="slot-info">
                                 <div class="slot-info-row">
                                     <span class="icon">💰</span>
-                                    <span class="slot-score">${(scores[player.id] || 0).toLocaleString()}점</span>
+                                    <span class="slot-score">${displayScore.toLocaleString()}점</span>
                                 </div>
                                 <div class="slot-info-row">
                                     <span class="icon">📝</span>
@@ -6878,6 +6895,12 @@
                     scoreResult = null;
                 }
                 multiplayerState.playerWords[multiplayerState.playerId] = words;
+
+                multiplayerState.optimisticScore = {
+                    playerId: multiplayerState.playerId,
+                    score: gameState.score,
+                    at: Date.now()
+                };
                 
                 // 🚀 클라이언트에서 즉시 내 점수 슬롯 반영 (KV 동기화 지연 보완)
                 const playersForSlots = (scoreResult && Array.isArray(scoreResult.players) && scoreResult.players.length > 0)
@@ -6898,6 +6921,7 @@
                         scores: { ...multiplayerState.scores, [multiplayerState.playerId]: gameState.score },
                         playerWords: multiplayerState.playerWords
                     };
+                    multiplayerState.scores = roomData.scores;
                     updatePlayerSlots(roomData);
                     console.log(`[점수] 클라이언트 슬롯 즉시 반영: ${gameState.score}점`);
                 }
@@ -7046,7 +7070,7 @@
                     if (gameState.sfxEnabled && !gameState.finishedSoundPlaying) {
                         gameState.finishedSoundPlaying = true;
                         try {
-                            const finishedSound = new Audio('./sound/finished.mp3');
+                            const finishedSound = new Audio('finished.mp3');
                             finishedSound.volume = 0.5;
                             finishedSound.onended = () => {
                                 // 재생이 끝나면 즉시 플래그 리셋
@@ -7067,7 +7091,7 @@
                 if (gameState.sfxEnabled && !gameState.finishedSoundPlaying) {
                     gameState.finishedSoundPlaying = true;
                     try {
-                        const finishedSound = new Audio('./sound/finished.mp3');
+                        const finishedSound = new Audio('finished.mp3');
                         finishedSound.volume = 0.5;
                         finishedSound.onended = () => {
                             // 재생이 끝나면 즉시 플래그 리셋
@@ -7939,7 +7963,7 @@
                 if ((timeLeftDisplay === 2 || timeLeftDisplay === 1) && timeLeftDisplay !== lastPlayedSecond) {
                     lastPlayedSecond = timeLeftDisplay;
                     try {
-                        const turnSecondsSound = new Audio('./sound/turn_seconds.mp3');
+                        const turnSecondsSound = new Audio('turn_seconds.mp3');
                         turnSecondsSound.volume = gameState.sfxEnabled ? 1 : 0;
                         turnSecondsSound.play().catch(err => console.log('[턴제] 효과음 재생 실패:', err));
                     } catch (err) {
