@@ -7679,8 +7679,11 @@
         checkWord = function() {
             originalCheckWord();
             if (multiplayerState.isMultiplayer) {
-                // 🚀 점수 즉시 반영 (딜레이 제거)
-                updatePlayerScore();
+                // 🚀 시간제 점수는 서버 반영(폴링)을 그대로 따르도록 유지 (깜빡임 방지)
+                // updatePlayerScore는 endGame 등 필요한 시점에만 사용
+                if (multiplayerState.gameMode === 'turn') {
+                    updatePlayerScore();
+                }
             }
         };
 
