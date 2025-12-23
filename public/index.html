@@ -5754,7 +5754,10 @@
 
             // 남은 시간 계산
             if (roomData.startTime) {
-                const elapsedTime = Math.floor((Date.now() - roomData.startTime) / 1000);
+                const serverNowEstimate = multiplayerState.serverTimeOffset
+                    ? (Date.now() - multiplayerState.serverTimeOffset)
+                    : Date.now();
+                const elapsedTime = Math.floor((serverNowEstimate - roomData.startTime) / 1000);
                 gameState.timeLeft = Math.max(1, 180 - elapsedTime);
                 console.log('[입장] 남은 시간:', gameState.timeLeft, '초');
             } else {
@@ -6693,18 +6696,7 @@
                     const rankText = `${i + 1}위`;
 
                     const rawScore = scores[player.id] || 0;
-                    let displayScore = rawScore;
-                    const opt = multiplayerState.optimisticScore;
-                    if (opt && opt.playerId === player.id) {
-                        const age = Date.now() - (opt.at || 0);
-                        if (age < 2000 && rawScore < opt.score) {
-                            displayScore = opt.score;
-                        } else if (rawScore >= opt.score) {
-                            multiplayerState.optimisticScore = null;
-                        } else if (age >= 2000) {
-                            multiplayerState.optimisticScore = null;
-                        }
-                    }
+                    const displayScore = rawScore;
                     
                     html += `
                         <div class="player-slot" data-player-id="${player.id}">
