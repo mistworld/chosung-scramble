@@ -4731,9 +4731,91 @@
 
         const sfxCache = {};
 
+        const sfxPool = {};
+        let audioUnlocked = false;
+        let lastTypingSoundAt = 0;
+        const TYPING_SOUND_MIN_INTERVAL_MS = 45;
+
+        function unlockAudioOnce() {
+            if (audioUnlocked) return;
+            audioUnlocked = true;
+            try {
+                Object.keys(sfxCache).forEach((k) => {
+                    try { sfxCache[k].load(); } catch (e) {}
+                });
+                const a = new Audio();
+                a.src = 'data:audio/mp3;base64,';
+                a.volume = 0;
+                a.play().then(() => {
+                    try { a.pause(); } catch (e) {}
+                }).catch(() => {});
+            } catch (e) {}
+            preloadCommonAudio();
+        }
+
+        function preloadCommonAudio() {
+            try {
+                const files = [
+                    'typing.mp3',
+                    'tick.mp3',
+                    'finished.mp3',
+                    'enter.mp3',
+                    'out.mp3',
+                    'heart.mp3',
+                    'background.mp3',
+                    'background2.mp3',
+                    'turn_background.mp3',
+                    'turn_seconds.mp3'
+                ];
+                files.forEach((file) => {
+                    if (!sfxCache[file]) {
+                        const base = new Audio(file);
+                        base.preload = 'auto';
+                        try { base.load(); } catch (e) {}
+                        sfxCache[file] = base;
+                    }
+                });
+                ['typing.mp3', 'tick.mp3', 'enter.mp3', 'out.mp3', 'heart.mp3', 'finished.mp3'].forEach((file) => {
+                    if (!sfxPool[file]) {
+                        const pool = [];
+                        for (let i = 0; i < 4; i++) {
+                            const a = new Audio(file);
+                            a.preload = 'auto';
+                            a.volume = 1;
+                            try { a.load(); } catch (e) {}
+                            pool.push(a);
+                        }
+                        sfxPool[file] = { pool, idx: 0 };
+                    }
+                });
+            } catch (e) {}
+        }
+
+        (function setupAudioUnlockHandlers() {
+            const handler = () => {
+                unlockAudioOnce();
+                window.removeEventListener('pointerdown', handler, true);
+                window.removeEventListener('keydown', handler, true);
+                window.removeEventListener('touchstart', handler, true);
+            };
+            window.addEventListener('pointerdown', handler, true);
+            window.addEventListener('keydown', handler, true);
+            window.addEventListener('touchstart', handler, true);
+        })();
+
         function playSfxFile(file, volume) {
             if (!gameState.sfxEnabled) return;
             try {
+                if (!audioUnlocked) unlockAudioOnce();
+                const pooled = sfxPool[file];
+                if (pooled && pooled.pool && pooled.pool.length > 0) {
+                    const a = pooled.pool[pooled.idx % pooled.pool.length];
+                    pooled.idx = (pooled.idx + 1) % pooled.pool.length;
+                    a.volume = volume;
+                    try { a.currentTime = 0; } catch (e) {}
+                    a.play().catch(() => {});
+                    return;
+                }
                 if (!sfxCache[file]) {
                     const base = new Audio(file);
                     base.preload = 'auto';
@@ -4751,6 +4833,7 @@
 
         function playBGM() {
             try {
+                if (!audioUnlocked) unlockAudioOnce();
                 // 턴제 모드: turn_background.mp3 루프
                 if (multiplayerState.isMultiplayer && multiplayerState.gameMode === 'turn') {
                     if (bgmAudio) {
@@ -4758,6 +4841,7 @@
                         bgmAudio.currentTime = 0;
                     }
                     bgmAudio = new Audio('turn_background.mp3');
+                    bgmAudio.preload = 'auto';
                     bgmAudio.loop = true;
                     bgmAudio.volume = 0.3;
                     bgmAudio.play().catch(e => {});
@@ -4771,6 +4855,7 @@
                     bgmAudio.currentTime = 0;
                 }
                 bgmAudio = new Audio(bgmFile);
+                bgmAudio.preload = 'auto';
                 bgmAudio.loop = true;
                 bgmAudio.volume = bgmFile === 'background2.mp3' ? 0.4 : 0.3;
                 bgmAudio.play().catch(e => {});
@@ -4845,6 +4930,9 @@
 
         function playTypingSound() {
             if (!gameState.typingEnabled) return;
+            const now = performance && performance.now ? performance.now() : Date.now();
+            if (now - lastTypingSoundAt < TYPING_SOUND_MIN_INTERVAL_MS) return;
+            lastTypingSoundAt = now;
             playSfxFile('typing.mp3', 0.2);
         }
 
